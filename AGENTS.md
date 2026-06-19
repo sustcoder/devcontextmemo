@@ -39,7 +39,15 @@
 
 ---
 
-## 编码规范
+## 工作规则
+
+- **错误分析必须先报根因再执行**：发现错误日志时，先分析根因和解决方案，等待用户确认后再修改代码。禁止未确认直接动手。
+- **E2E 优先于 mock**：mock 单元测试覆盖接口契约，E2E 覆盖数据流契约。跨多层的数据流必须用真实数据源验证。
+- **状态机变更必配测试**：修改 `enums.py` 中的 `ALLOWED_TRANSITIONS` 或状态列表时，必须同步新增配套的状态机测试用例。
+
+---
+
+## 操作规范
 
 ### 必须遵守
 - 函数/方法必须有 Google Style docstring
@@ -194,7 +202,7 @@ devcontext --help
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **devContextMemo** (2559 symbols, 6343 relationships, 96 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **devContextMemo** (2613 symbols, 6546 relationships, 103 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
