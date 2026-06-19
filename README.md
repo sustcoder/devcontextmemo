@@ -135,15 +135,26 @@ DRAFT → CANDIDATE → ACTIVE → COLD → STALE → DEPRECATED
 
 ## 配置
 
-环境变量（`DEVCONTEXT_` 前缀）：
+在项目根目录创建 `.env` 文件（已加入 `.gitignore`，不会提交）：
 
-### LLM
+```bash
+# === LLM 配置（必填） ===
+DEVCONTEXT_LLM_PROVIDER=deepseek
+DEVCONTEXT_LLM_API_KEY=sk-your-api-key        # 替换为真实 key
+DEVCONTEXT_LLM_BASE_URL=https://api.deepseek.com/v1
+DEVCONTEXT_LLM_MODEL=deepseek-chat
+```
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `LLM_PROVIDER` | LLM 供应商 | `openai` |
-| `LLM_MODEL` | LLM 模型 | `MiniMax-Text-01` |
-| `LLM_BASE_URL` | LLM API 地址 | `https://api.minimax.chat/v1` |
+支持的环境变量（`DEVCONTEXT_` 前缀）：
+
+### LLM（必填）
+
+| 变量 | 说明 | 示例 |
+|------|------|------|
+| `LLM_API_KEY` | API 密钥 | `sk-xxx` |
+| `LLM_BASE_URL` | API 地址 | `https://api.deepseek.com/v1` |
+| `LLM_PROVIDER` | 供应商 | `deepseek` |
+| `LLM_MODEL` | 模型名 | `deepseek-chat` |
 
 ### 服务
 
