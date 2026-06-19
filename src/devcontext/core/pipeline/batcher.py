@@ -24,10 +24,13 @@ import datetime as dt
 import json
 import logging
 import re
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import yaml
+
+from devcontext.core.collectors.base import CleanMessage
 
 logger = logging.getLogger(__name__)
 
@@ -236,3 +239,135 @@ class Batcher:
         )
 
         return batch_path
+
+
+class BatchWriter:
+    """回调模式攒批器 — 从内存 Buffer 直接接收消息并落盘。
+
+    与现有 Batcher（文件扫描模式）互补：
+    - BatchWriter：daemon 自动采集主路径（回调驱动）
+    - Batcher：CLI 手动触发 / 历史数据迁移（目录扫描）
+
+    Attributes:
+        staging_dir: 批次输出目录。
+        token_threshold: token 阈值（默认 6000）。
+        max_age_minutes: 批次最大存活时间。
+    """
+
+    def __init__(
+        self,
+        staging_dir: str | Path,
+        token_threshold: int = 6000,
+        max_age_minutes: int = 30,
+    ):
+        """初始化攒批器。
+
+        Args:
+            staging_dir: 批次输出目录。
+            token_threshold: token 阈值。
+            max_age_minutes: 批次最大存活时间（分钟）。
+        """
+        self.staging_dir = Path(staging_dir)
+        self.token_threshold = token_threshold
+        self.max_age_minutes = max_age_minutes
+        self._buffers: dict[str, dict] = {}
+        self.on_batch_ready: Callable | None = None
+
+    def _count_tokens(self, text: str) -> int:
+        """简化 token 估算：len(text) // 2。
+
+        Args:
+            text: 消息正文。
+
+        Returns:
+            估算 token 数。
+        """
+        return len(text) // 2
+
+    def on_messages(
+        self,
+        messages: list[CleanMessage],
+        session_id: str,
+    ) -> Path | None:
+        """接收消息并攒批。
+
+        Args:
+            messages: CleanMessage 列表。
+            session_id: 会话 ID。
+
+        Returns:
+            批次目录路径（如果触发落盘），否则 None。
+        """
+        if session_id not in self._buffers:
+            self._buffers[session_id] = {
+                "messages": [],
+                "token_count": 0,
+                "started_at": time.time(),
+                "source": messages[0].source if messages else "unknown",
+            }
+
+        buf = self._buffers[session_id]
+        for msg in messages:
+            buf["token_count"] += self._count_tokens(msg.content)
+
+        buf["messages"].extend(messages)
+
+        if buf["token_count"] >= self.token_threshold:
+            return self._flush_batch(session_id)
+
+        return None
+
+    def _flush_batch(self, session_id: str) -> Path:
+        """落盘一个批次。
+
+        Args:
+            session_id: 会话 ID。
+
+        Returns:
+            批次目录路径。
+        """
+        buf = self._buffers.pop(session_id)
+
+        date_str = time.strftime("%Y-%m-%d", time.localtime())
+        batch_dir = self.staging_dir / date_str / session_id
+        batch_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write messages.jsonl
+        messages_path = batch_dir / "messages.jsonl"
+        with open(messages_path, "w", encoding="utf-8") as f:
+            for msg in buf["messages"]:
+                record = {
+                    "session_id": msg.session_id,
+                    "role": msg.role,
+                    "content": msg.content,
+                    "timestamp": msg.timestamp,
+                    "source": msg.source,
+                }
+                if msg.metadata:
+                    record.update(msg.metadata)
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+        # Write _meta.yaml
+        meta = {
+            "session_id": session_id,
+            "source": buf["source"],
+            "batch_created": time.time(),
+            "message_count": len(buf["messages"]),
+            "token_count": buf["token_count"],
+            "message_file": "messages.jsonl",
+            "trigger_reason": (
+                "token_threshold"
+                if buf["token_count"] >= self.token_threshold
+                else "message_count"
+            ),
+            "status": "ready",
+        }
+        meta_path = batch_dir / "_meta.yaml"
+        with open(meta_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(meta, f, allow_unicode=True, sort_keys=False)
+
+        # Trigger downstream callback
+        if self.on_batch_ready:
+            self.on_batch_ready(batch_dir)
+
+        return batch_dir
