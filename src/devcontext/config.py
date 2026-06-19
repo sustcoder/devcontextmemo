@@ -3,6 +3,7 @@
 从环境变量和配置文件加载应用配置。
 """
 
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
@@ -35,6 +36,23 @@ class Settings(BaseSettings):
     arbitration_auto_adopt_threshold: float = 0.30
     arbitration_manual_review_threshold: float = 0.10
     arbitration_dual_discard_threshold: float = 0.40
+
+    # 采集配置
+    opencode_db_path: str = "~/.config/opencode/opencode.db"
+    poll_interval_ms: int = 500
+    buffer_max_messages: int = 200
+    buffer_max_tokens: int = 6000
+
+    # 攒批配置
+    batch_token_threshold: int = 6000
+    batch_max_age_minutes: int = 30
+
+    # 文件系统采集配置
+    filesystem_scan_paths: list[str] = Field(default_factory=list)
+    filesystem_file_patterns: list[str] = Field(default_factory=lambda: ["*.jsonl", "*.md", "*.yaml"])
+
+    # 通用 SQLite 数据源配置
+    generic_sqlite_sources: list[dict] = Field(default_factory=list)
 
 
 settings = Settings()
