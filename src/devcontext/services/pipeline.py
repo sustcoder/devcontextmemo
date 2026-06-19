@@ -138,6 +138,10 @@ class PipelineService:
     async def start(self):
         """启动编排服务（后台运行）。"""
         self._running = True
+
+        # 启动时扫描 staging 中已有的 ready batch 并处理
+        self._process_existing_batches()
+
         for collector in self.collectors:
             if hasattr(collector, "start"):
                 asyncio.create_task(collector.start())
@@ -145,6 +149,26 @@ class PipelineService:
             "PipelineService started with %d collector(s)",
             len(self.collectors),
         )
+
+    def _process_existing_batches(self):
+        """扫描 staging 目录中 status=ready 的 _meta.yaml，触发 Steps 2-6。"""
+        import yaml
+
+        staging = Path(self.batch_writer.staging_dir)
+        if not staging.exists():
+            return
+
+        for meta_file in sorted(staging.rglob("_meta.yaml")):
+            try:
+                meta = yaml.safe_load(meta_file.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if meta.get("status") != "ready":
+                continue
+
+            batch_dir = meta_file.parent
+            logger.info("processing existing batch: %s", batch_dir)
+            self._on_batch_ready(batch_dir)
 
     async def stop(self):
         """停止编排服务。"""
