@@ -35,19 +35,19 @@ app.command(name="status")(status_command)
 
 
 # === dev config ===
-config_app = typer.Typer(help="配置管理")
+config_app = typer.Typer(help="配置管理", no_args_is_help=True)
 config_app.command(name="get")(config_get)
 config_app.command(name="set")(config_set)
-app.add_typer(config_app, name="config")
+app.add_typer(config_app, name="config", no_args_is_help=True)
 
 
 # === dev review ===
-review_app = typer.Typer(help="审核交互")
+review_app = typer.Typer(help="审核交互", no_args_is_help=True)
 review_app.command(name="list")(review_list)
 review_app.command(name="approve")(review_approve)
 review_app.command(name="reject")(review_reject)
 review_app.command(name="restore")(review_restore)
-app.add_typer(review_app, name="review")
+app.add_typer(review_app, name="review", no_args_is_help=True)
 
 
 # === dev dream ===

@@ -81,7 +81,21 @@ class OpenCodeAdapter(BaseAdapter):
         finally:
             conn.close()
 
-        # 按 message_id 聚合 parts → 合并为单条消息
+        return self._aggregate_messages(rows)
+
+    def _aggregate_messages(self, rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
+        """Aggregate part rows into unified message dictionaries.
+
+        Groups parts by message_id, merging text/tool/reasoning content,
+        and cleaning empty fields.
+
+        Args:
+            rows: Query result rows with session_id, message_id, role,
+                  part_type, part_data, timestamp, directory columns.
+
+        Returns:
+            List of normalized message dicts.
+        """
         messages: dict[str, dict[str, Any]] = {}
         seq_counter: dict[str, int] = {}
 
@@ -124,7 +138,6 @@ class OpenCodeAdapter(BaseAdapter):
             elif part_type == "reasoning":
                 messages[msg_key]["reasoning"] = part_data.get("text", "")
 
-        # 清理空 tools/reasoning 字段
         result = list(messages.values())
         for msg in result:
             if not msg["tools"]:
@@ -133,6 +146,44 @@ class OpenCodeAdapter(BaseAdapter):
                 del msg["reasoning"]
 
         return result
+
+    def incremental_query(self, watermarks: dict) -> list[dict[str, Any]]:
+        """增量查询：按 watermark 拉取新消息。
+
+        Args:
+            watermarks: {"last_message_id": str} 水位线，存储最后处理的消息 ID。
+
+        Returns:
+            标准化后的新消息列表。
+        """
+        last_id = str(watermarks.get("last_message_id", "0"))
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA query_only = 1;")
+            conn.execute("PRAGMA busy_timeout = 3000;")
+
+            rows = conn.execute(
+                """SELECT
+                    s.id           as session_id,
+                    s.directory    as directory,
+                    json_extract(m.data, '$.role')  as role,
+                    json_extract(p.data, '$.type')  as part_type,
+                    p.data         as part_data,
+                    p.time_created as timestamp,
+                    m.id           as message_id
+                FROM session s
+                JOIN message m ON m.session_id = s.id
+                JOIN part p ON p.message_id = m.id
+                WHERE m.id > ?
+                  AND json_extract(p.data, '$.type') IN ('text', 'tool', 'reasoning')
+                ORDER BY s.id, p.time_created""",
+                (last_id,),
+            ).fetchall()
+        finally:
+            conn.close()
+
+        return self._aggregate_messages(rows)
 
     def normalize(self, raw_record: dict[str, Any]) -> dict[str, Any]:
         """标准化单条记录（OpenCode 已在 collect 中完成标准化）。

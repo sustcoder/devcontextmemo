@@ -153,6 +153,35 @@ docs/                            # 16 份设计文档（详见编码索引）
 
 ---
 
+## 打包分发
+
+构建 wheel + sdist 到 `dist/` 目录：
+
+```bash
+# 清理旧产物 + 构建
+rm -rf build/ src/devcontext.egg-info/ && python -m build --wheel --sdist
+```
+
+产物：
+| 文件 | 用途 |
+|------|------|
+| `dist/devcontext-0.1.0-py3-none-any.whl` | 二进制 wheel（推荐分发） |
+| `dist/devcontext-0.1.0.tar.gz` | 源码 sdist |
+
+安装：
+```bash
+pip install dist/devcontext-0.1.0-py3-none-any.whl
+devcontext --help
+```
+
+构建配置：`pyproject.toml`（`[build-system]` + `[project]` + `[tool.setuptools]`）
+
+**注意：** 
+- 不要手动放 sdist 到项目根目录，统一放 `dist/`
+- 升级版本号时同步修改 `pyproject.toml` 中的 `version` 和 `src/devcontext/__init__.py` 中的 `__version__`
+
+---
+
 ## Graphify
 
 本项目可能包含 graphify-out/ 知识图谱。
@@ -165,7 +194,7 @@ docs/                            # 16 份设计文档（详见编码索引）
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **devContextMemo** (2138 symbols, 5397 relationships, 79 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **devContextMemo** (2412 symbols, 5817 relationships, 79 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

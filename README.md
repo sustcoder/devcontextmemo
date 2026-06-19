@@ -21,12 +21,26 @@ devContextMemo 是一个项目知识管理工具，自动将 AI 编程工具（O
 
 - Python >= 3.13
 
-### 安装步骤
+### 本地使用（在devContextMemo中使用）
+```bash
+cd /Users/liyanzhao/soft/code/devContextMemo
+source .venv/bin/activate
+devcontext --help
+```
+
+### 源码安装（开发用）
 
 ```bash
 git clone <repo-url> && cd devContextMemo
 python3.13 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
+devcontext --help
+```
+
+### wheel 安装（分发用）
+
+```bash
+pip install dist/devcontext-0.1.0-py3-none-any.whl
 devcontext --help
 ```
 

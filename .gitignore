@@ -29,7 +29,7 @@ Thumbs.db
 
 # App data
 .devContextMemo/
-.claw/
+.devContextMemo/
 .claude/
 .codebuddy/
 
@@ -39,5 +39,5 @@ Thumbs.db
 # GitNexus cache
 .gitnexus/
 
-# Graphify AST cache (build artifacts)
-graphify-out/cache/
+# Graphify output (local build artifacts, rebuild with `graphify update .`)
+graphify-out/
