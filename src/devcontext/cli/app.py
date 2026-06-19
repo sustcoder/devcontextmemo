@@ -54,5 +54,87 @@ app.add_typer(review_app, name="review", no_args_is_help=True)
 app.command(name="dream")(dream_command)
 
 
+# === dev capture ===
+@app.command("capture")
+def capture_command(
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Preview mode, no actual writes"
+    ),
+) -> None:
+    """手动触发一次完整采集。
+
+    无参数时执行实际采集并写入知识库。
+    --dry-run 预览模式：仅显示会采集多少数据，不实际写入。
+    """
+    from pathlib import Path
+
+    from devcontext.config import settings
+    from devcontext.core.adapters.filesystem import FileSystemAdapter
+    from devcontext.core.adapters.opencode_sqlite import OpenCodeSQLiteAdapter
+    from devcontext.core.collectors.polling import PollingCollector
+    from devcontext.core.pipeline.batcher import BatchWriter
+    from devcontext.services.pipeline import PipelineService
+
+    collectors = []
+
+    if settings.opencode_db_path:
+        db_path = Path(settings.opencode_db_path).expanduser()
+        if db_path.exists():
+            collectors.append(
+                PollingCollector(
+                    adapter=OpenCodeSQLiteAdapter(
+                        db_path=str(db_path),
+                    ),
+                    poll_interval_ms=settings.poll_interval_ms,
+                )
+            )
+
+    if settings.filesystem_scan_paths:
+        collectors.append(
+            PollingCollector(
+                adapter=FileSystemAdapter(
+                    scan_paths=settings.filesystem_scan_paths,
+                    file_patterns=settings.filesystem_file_patterns,
+                ),
+            )
+        )
+
+    if not collectors:
+        typer.echo("No data sources configured or available.")
+        typer.echo(
+            "  Configure opencode_db_path or filesystem_scan_paths in settings."
+        )
+        raise typer.Exit(code=1)
+
+    batch_writer = BatchWriter(
+        staging_dir=settings.staging_dir,
+        token_threshold=settings.batch_token_threshold,
+    )
+
+    pipeline = PipelineService(
+        collectors=collectors,
+        batch_writer=batch_writer,
+    )
+
+    if dry_run:
+        typer.echo("=== DRY RUN (preview mode) ===")
+
+    result = pipeline.capture(dry_run=dry_run)
+
+    for source, info in result["collectors"].items():
+        if "error" in info:
+            typer.echo(f"  [{source}] ERROR: {info['error']}")
+        else:
+            typer.echo(
+                f"  [{source}] Found {info['messages_found']} new messages"
+            )
+            typer.echo(
+                f"  [{source}] Watermarks: {info['watermarks']}"
+            )
+
+    if not dry_run:
+        typer.echo("Capture complete.")
+
+
 if __name__ == "__main__":
     app()
