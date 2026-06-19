@@ -86,53 +86,126 @@ class PipelineService:
     def _on_batch_ready(self, batch_path: Path) -> None:
         """Step 1 批次就绪回调 → Step 2-6 顺序执行。
 
+        任一步骤失败即终止，不传递空/损坏文件给后续步骤。
+
         Args:
             batch_path: 批次目录路径。
         """
         logger.info("processing batch: %s", batch_path)
 
-        try:
-            # batch_path 是目录，解析到 messages.jsonl 文件
-            current_path: Path = batch_path
-            if current_path.is_dir():
-                messages_file = current_path / "messages.jsonl"
-                if not messages_file.exists():
-                    # 兼容旧 Batcher 命名
-                    candidates = sorted(current_path.glob("batch_*.jsonl"))
-                    messages_file = candidates[0] if candidates else current_path
-                current_path = messages_file
+        # 解析 messages.jsonl 文件路径
+        current_path: Path = batch_path
+        if current_path.is_dir():
+            messages_file = current_path / "messages.jsonl"
+            if not messages_file.exists():
+                candidates = sorted(current_path.glob("batch_*.jsonl"))
+                messages_file = candidates[0] if candidates else current_path
+            current_path = messages_file
 
-            if self.extractor:
+        # Step 2a: 提炼
+        if self.extractor:
+            try:
                 current_path = self.extractor.process(current_path)
                 logger.info("extraction done: %s", current_path)
+            except Exception:
+                logger.error(
+                    "extraction failed for batch: %s", batch_path, exc_info=True
+                )
+                self._update_batch_status(batch_path, "failed")
+                return
 
-            if self.entity_extractor:
+        # Step 2b: 实体提取
+        if self.entity_extractor:
+            try:
                 current_path = self.entity_extractor.process(current_path)
                 logger.info("entity extraction done: %s", current_path)
+            except Exception:
+                logger.error(
+                    "entity extraction failed for batch: %s", batch_path, exc_info=True
+                )
+                self._update_batch_status(batch_path, "failed")
+                return
 
-            if self.validator:
+        # Step 3: 验证
+        if self.validator:
+            try:
                 current_path = self.validator.process(current_path)
                 logger.info("validation done: %s", current_path)
+            except Exception:
+                logger.error(
+                    "validation failed for batch: %s", batch_path, exc_info=True
+                )
+                self._update_batch_status(batch_path, "failed")
+                return
 
-            if self.deduplicator:
+        # Step 4: 去重
+        if self.deduplicator:
+            try:
                 current_path = self.deduplicator.process(current_path)
                 logger.info("dedup done: %s", current_path)
+            except Exception:
+                logger.error(
+                    "dedup failed for batch: %s", batch_path, exc_info=True
+                )
+                self._update_batch_status(batch_path, "failed")
+                return
 
-            if self.writer:
+        # Step 5: 写入
+        if self.writer:
+            try:
                 results = self.writer.process(current_path)
                 logger.info("write done: %d items", len(results))
+            except Exception:
+                logger.error(
+                    "write failed for batch: %s", batch_path, exc_info=True
+                )
+                self._update_batch_status(batch_path, "failed")
+                return
 
-            if self.consolidator:
+        # Step 6: 巩固
+        if self.consolidator:
+            try:
                 report = self.consolidator.process()
                 logger.info(
                     "consolidation done: promoted=%d pruned=%d",
                     report.promoted_count,
                     report.pruned_count,
                 )
+            except Exception:
+                logger.error(
+                    "consolidation failed", exc_info=True
+                )
+                self._update_batch_status(batch_path, "failed")
+                return
 
+        # 全部完成 → 标记 done
+        self._update_batch_status(batch_path, "done")
+        logger.info("batch complete: %s", batch_path)
+
+    def _update_batch_status(self, batch_path: Path, status: str):
+        """更新 _meta.yaml 中的 status 字段。
+
+        Args:
+            batch_path: 批次目录或文件路径。
+            status: 新状态（done/failed）。
+        """
+        import yaml
+
+        batch_dir = batch_path if batch_path.is_dir() else batch_path.parent
+        meta_file = batch_dir / "_meta.yaml"
+        if not meta_file.exists():
+            return
+
+        try:
+            meta = yaml.safe_load(meta_file.read_text(encoding="utf-8"))
+            meta["status"] = status
+            meta_file.write_text(
+                yaml.safe_dump(meta, allow_unicode=True, sort_keys=False),
+                encoding="utf-8",
+            )
         except Exception:
-            logger.error(
-                "pipeline failed for batch: %s", batch_path, exc_info=True
+            logger.warning(
+                "failed to update batch status: %s -> %s", meta_file, status
             )
 
     async def start(self):
@@ -168,7 +241,11 @@ class PipelineService:
 
             batch_dir = meta_file.parent
             logger.info("processing existing batch: %s", batch_dir)
-            self._on_batch_ready(batch_dir)
+            try:
+                self._on_batch_ready(batch_dir)
+            except Exception:
+                # 处理失败不改 meta 状态，交给 _on_batch_ready 内部标记
+                pass
 
     async def stop(self):
         """停止编排服务。"""
