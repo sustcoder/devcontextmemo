@@ -74,7 +74,7 @@ class TestOpenCodeIncremental:
         conn.close()
 
         adapter = OpenCodeAdapter(str(opencode_db))
-        results = adapter.incremental_query({"last_message_id": "0"})
+        results = adapter.incremental_query({"checkpoint": "0"})
         assert len(results) == 3
         assert results[0]["session_id"] == "c1"
         assert results[0]["role"] == "user"
@@ -94,11 +94,11 @@ class TestOpenCodeIncremental:
         conn.close()
 
         adapter = OpenCodeAdapter(str(opencode_db))
-        results = adapter.incremental_query({"last_message_id": "msg1"})
+        results = adapter.incremental_query({"checkpoint": "msg1"})
         assert len(results) == 1
         assert results[0]["content"] == "new"
 
     def test_empty_db_returns_empty(self, opencode_db):
         adapter = OpenCodeAdapter(str(opencode_db))
-        results = adapter.incremental_query({"last_message_id": "0"})
+        results = adapter.incremental_query({"checkpoint": "0"})
         assert results == []

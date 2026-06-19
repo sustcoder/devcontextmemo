@@ -288,12 +288,14 @@ class BatchWriter:
         self,
         messages: list[CleanMessage],
         session_id: str,
+        force: bool = False,
     ) -> Path | None:
         """接收消息并攒批。
 
         Args:
             messages: CleanMessage 列表。
             session_id: 会话 ID。
+            force: 强制落盘，忽略 token 阈值。
 
         Returns:
             批次目录路径（如果触发落盘），否则 None。
@@ -312,7 +314,7 @@ class BatchWriter:
 
         buf["messages"].extend(messages)
 
-        if buf["token_count"] >= self.token_threshold:
+        if force or buf["token_count"] >= self.token_threshold:
             return self._flush_batch(session_id)
 
         return None

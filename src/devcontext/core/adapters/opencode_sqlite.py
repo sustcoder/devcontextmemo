@@ -52,7 +52,7 @@ class OpenCodeSQLiteAdapter(BaseAdapter):
             raw_record: 原始数据库行记录。
 
         Returns:
-            标准化字典（session_id, role, content, timestamp, source）。
+            标准化字典（session_id, role, content, timestamp, source, id）。
         """
         return {
             "session_id": raw_record.get("session_id", ""),
@@ -60,6 +60,7 @@ class OpenCodeSQLiteAdapter(BaseAdapter):
             "content": raw_record.get("content", ""),
             "timestamp": raw_record.get("timestamp", "1970-01-01T00:00:00Z"),
             "source": raw_record.get("source", self.source_name),
+            "id": raw_record.get("id", ""),
         }
 
     def incremental_query(self, watermarks: dict[str, Any]) -> list[dict[str, Any]]:
@@ -75,7 +76,7 @@ class OpenCodeSQLiteAdapter(BaseAdapter):
         """
         import sqlite3
 
-        last_id = str(watermarks.get("last_message_id", "0"))
+        last_id = str(watermarks.get("checkpoint", "0"))
         conn = sqlite3.connect(str(self.db_path))
         conn.execute("PRAGMA query_only = ON")
         conn.row_factory = sqlite3.Row

@@ -151,12 +151,12 @@ class OpenCodeAdapter(BaseAdapter):
         """增量查询：按 watermark 拉取新消息。
 
         Args:
-            watermarks: {"last_message_id": str} 水位线，存储最后处理的消息 ID。
+            watermarks: {"checkpoint": str} 水位线，存储最后处理的消息 ID。
 
         Returns:
             标准化后的新消息列表。
         """
-        last_id = str(watermarks.get("last_message_id", "0"))
+        last_id = str(watermarks.get("checkpoint", "0"))
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         try:

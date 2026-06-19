@@ -47,7 +47,7 @@ class TestGenericSQLiteAdapter:
             query_template="SELECT id, content, role FROM msgs WHERE id > ?",
             id_column="id",
         )
-        results = adapter.incremental_query({"cursor_last_id": 0})
+        results = adapter.incremental_query({"checkpoint": 0})
         assert len(results) == 2
 
     def test_incremental_respects_watermark(self, test_db):
@@ -57,7 +57,7 @@ class TestGenericSQLiteAdapter:
             query_template="SELECT id, content, role FROM msgs WHERE id > ?",
             id_column="id",
         )
-        results = adapter.incremental_query({"cursor_last_id": 1})
+        results = adapter.incremental_query({"checkpoint": 1})
         assert len(results) == 1
         assert results[0]["content"] == "world"
 

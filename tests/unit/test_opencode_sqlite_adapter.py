@@ -40,7 +40,7 @@ class TestOpenCodeSQLiteAdapter:
     def test_incremental_query(self, opencode_db):
         """incremental_query should return messages with session_id."""
         adapter = OpenCodeSQLiteAdapter(str(opencode_db))
-        results = adapter.incremental_query({"last_message_id": "0"})
+        results = adapter.incremental_query({"checkpoint": "0"})
         assert len(results) >= 1
         assert "session_id" in results[0]
 

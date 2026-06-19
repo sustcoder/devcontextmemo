@@ -43,21 +43,21 @@ class TestFileSystemAdapter:
     def test_scans_jsonl_files(self, scan_dir):
         """incremental_query scans .jsonl files and returns messages."""
         adapter = FileSystemAdapter([str(scan_dir)], ["*.jsonl"])
-        results = adapter.incremental_query({"last_scan_time": 0})
+        results = adapter.incremental_query({"checkpoint": 0})
         assert len(results) >= 2
 
     def test_fingerprint_dedup(self, scan_dir):
         """Second incremental_query returns no new messages (fingerprint dedup)."""
         adapter = FileSystemAdapter([str(scan_dir)], ["*.jsonl"])
-        first = adapter.incremental_query({"last_scan_time": 0})
-        second = adapter.incremental_query({"last_scan_time": time.time() + 60})
+        first = adapter.incremental_query({"checkpoint": 0})
+        second = adapter.incremental_query({"checkpoint": time.time() + 60})
         assert len(first) >= 2
         assert len(second) == 0
 
     def test_mtime_filtering(self, scan_dir):
-        """incremental_query with future last_scan_time returns no results."""
+        """incremental_query with future checkpoint returns no results."""
         adapter = FileSystemAdapter([str(scan_dir)], ["*.jsonl"])
-        results = adapter.incremental_query({"last_scan_time": time.time() + 3600})
+        results = adapter.incremental_query({"checkpoint": time.time() + 3600})
         assert len(results) == 0
 
     def test_normalize_passthrough(self):

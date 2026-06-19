@@ -107,4 +107,4 @@ class TestPollingCollector:
         ])
         collector = PollingCollector(adapter)
         collector._poll_once()
-        assert collector.watermarks.get("mock") == 5
+        assert collector.watermarks.get("checkpoint") == 5

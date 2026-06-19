@@ -155,8 +155,7 @@ class PollingCollector(BaseCollector):
         if not raw_messages:
             return
         last = raw_messages[-1]
-        new_watermark = last.get("id") or str(time.time())
-        self.watermarks[self.adapter.source_name] = new_watermark
+        self.watermarks["checkpoint"] = last.get("id") or str(time.time())
 
     def _parse_timestamp(self, ts) -> float:
         """将时间戳转换为 float（Unix 时间）。"""

@@ -79,8 +79,7 @@ class GenericSQLiteAdapter(BaseAdapter):
         Returns:
             标准化后的记录列表。
         """
-        watermark_key = f"{self.source_name}_last_id"
-        last_id = watermarks.get(watermark_key, 0)
+        last_id = watermarks.get("checkpoint", 0)
 
         conn = sqlite3.connect(str(self.db_path))
         conn.execute("PRAGMA query_only = ON")

@@ -165,6 +165,26 @@ class PipelineService:
                         "messages_found": len(messages),
                         "watermarks": dict(getattr(collector, "watermarks", {})),
                     }
+
+                    # Flush buffer through pipeline (capture = full pipeline)
+                    if not dry_run and collector.buffer:
+                        flushed = collector._flush_buffer()
+                        # Group by session_id and send to BatchWriter
+                        by_session: dict[str, list] = {}
+                        for msg in flushed:
+                            by_session.setdefault(msg.session_id, []).append(msg)
+                        for session_id, batch in by_session.items():
+                            batch_path = self.batch_writer.on_messages(
+                                batch, session_id, force=True
+                            )
+                            if batch_path:
+                                results["collectors"][source][
+                                    "batch_path"
+                                ] = str(batch_path)
+
+                        # Persist watermarks
+                        if hasattr(collector, "_persist_watermarks"):
+                            collector._persist_watermarks()
             except Exception as e:
                 results["collectors"][source] = {"error": str(e)}
 

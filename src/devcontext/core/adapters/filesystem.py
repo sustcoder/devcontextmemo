@@ -55,7 +55,7 @@ class FileSystemAdapter(BaseAdapter):
         Returns:
             新文件的消息列表.
         """
-        last_scan = float(watermarks.get("last_scan_time", 0))
+        last_scan = float(watermarks.get("checkpoint", 0))
         results = []
 
         for scan_path in self.scan_paths:
