@@ -162,3 +162,22 @@
 **修复：** 测试中用 `unittest.mock.patch` 替换 `DEFAULT_WATERMARK_FILE` 为 `tmp_path` 下的临时文件，保证每个测试有独立的水位线。
 
 **经验：** 任何带持久化状态的组件，测试必须隔离持久化路径。常量定义的默认路径是集成测试污染的常见来源。
+
+---
+
+## #10: LLM 失败导致下游步骤连锁崩溃
+
+**日期:** 2026-06-19
+**关联:** PipelineService._on_batch_ready error handling
+
+**问题：** LLM API key 401 导致 `Extractor.process()` 失败后，pipeline 继续把空/损坏的输出传给 `EntityExtractor` → `Validator`，最终 Validator 报 `ValueError: Knowledge file is empty`。而且每次重启 daemon 都会重试同一个失败的 batch。
+
+**根因：** 原 `_on_batch_ready` 用一个外层 `try/except` 包住所有步骤，单个步骤失败后仍继续执行后续步骤。同时 `_process_existing_batches()` 只检查 `status=ready`，失败后的 batch 状态仍是 ready，导致无限重试。
+
+**修复：**
+1. 每个 Step 拆分为独立的 `try/except`，失败后立即 `return`，不再传递给后续步骤
+2. 新增 `_update_batch_status(batch_path, status)` 方法更新 `_meta.yaml`
+3. 失败时标记 `status: failed`，成功时标记 `status: done`
+4. `_process_existing_batches()` 已有 status 检查逻辑，无需修改（自动跳过 failed/done）
+
+**经验：** 流水线的错误处理不能是一层大 `try/except`，必须每步独立。否则前一步的失败会被后一步的报错掩盖，定位问题困难。失败状态必须持久化，否则重启后无限重试。
