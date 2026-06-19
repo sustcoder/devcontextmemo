@@ -217,12 +217,14 @@ def is_valid_depth(value: str) -> bool:
 def is_valid_domain(domain: str, domain_tree: dict[str, Any]) -> bool:
     """检查 domain 是否在领域树中注册。
 
+    当 domain_tree 为空时，允许所有 domain（自动模式）。
+
     Args:
         domain: 领域字符串（如 "order"）。
         domain_tree: 领域树字典，键为领域名。
 
     Returns:
-        True 如果 domain 是 domain_tree 的顶层键。
+        True 如果 domain 有效。
 
     Examples:
         >>> tree = {"order": {}, "payment": {}}
@@ -230,7 +232,9 @@ def is_valid_domain(domain: str, domain_tree: dict[str, Any]) -> bool:
         True
         >>> is_valid_domain("shopping_cart", tree)
         False
+        >>> is_valid_domain("general", {})
+        True
     """
-    if not isinstance(domain, str) or not domain:
-        return False
+    if not domain_tree:  # 空树 = 自动模式，允许所有 domain
+        return bool(domain)
     return domain in domain_tree

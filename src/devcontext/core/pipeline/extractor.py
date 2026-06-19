@@ -162,7 +162,12 @@ class Extractor:
             truncated = True
 
         # 领域列表
-        domain_list = "\n".join(f"- {d}" for d in sorted(self.domain_tree.keys()))
+        if self.domain_tree:
+            domain_list = "\n".join(
+                f"- {d}" for d in sorted(self.domain_tree.keys())
+            )
+        else:
+            domain_list = "- (自动检测，无预设领域)"
 
         prompt = f"""你是 devContextMemo 的知识提炼器。从以下对话中提取可复用的项目知识。
 

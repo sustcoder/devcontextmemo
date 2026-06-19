@@ -1,5 +1,6 @@
 """Tests for OpenCodeSQLiteAdapter."""
 
+import json
 import sqlite3
 
 import pytest
@@ -9,15 +10,18 @@ from devcontext.core.adapters.opencode_sqlite import OpenCodeSQLiteAdapter
 
 @pytest.fixture
 def opencode_db(tmp_path):
-    """Create a minimal OpenCode-style SQLite database."""
+    """Create a minimal OpenCode SQLite database (real schema)."""
     db_path = tmp_path / "opencode.db"
     conn = sqlite3.connect(str(db_path))
-    conn.execute("CREATE TABLE conversation(id TEXT PRIMARY KEY, title TEXT, created_at TEXT)")
-    conn.execute("CREATE TABLE message(id TEXT PRIMARY KEY, conversation_id TEXT, role TEXT, created_at TEXT)")
-    conn.execute("CREATE TABLE part(id TEXT PRIMARY KEY, message_id TEXT, type TEXT, content TEXT, tool_name TEXT, created_at TEXT)")
-    conn.execute("INSERT INTO conversation(id, title, created_at) VALUES ('c1', 'S', '2026-06-19T10:00:00Z')")
-    conn.execute("INSERT INTO message(id, conversation_id, role, created_at) VALUES ('msg1', 'c1', 'user', '2026-06-19T10:00:00Z')")
-    conn.execute("INSERT INTO part(id, message_id, type, content, tool_name, created_at) VALUES ('p1', 'msg1', 'text', 'hello', NULL, '2026-06-19T10:00:00Z')")
+    conn.execute("CREATE TABLE session(id TEXT PRIMARY KEY, project_id TEXT, time_created INTEGER, time_updated INTEGER, title TEXT)")
+    conn.execute("CREATE TABLE message(id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT NOT NULL)")
+    conn.execute("CREATE TABLE part(id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT NOT NULL)")
+    ts = 1718809200000
+    conn.execute("INSERT INTO session(id, project_id, time_created, time_updated, title) VALUES ('c1', 'test', ?, ?, 'S')", (ts, ts))
+    conn.execute("INSERT INTO message(id, session_id, time_created, time_updated, data) VALUES ('msg1', 'c1', ?, ?, ?)",
+                 (ts, ts, json.dumps({"role": "user"})))
+    conn.execute("INSERT INTO part(id, message_id, session_id, time_created, time_updated, data) VALUES ('p1', 'msg1', 'c1', ?, ?, ?)",
+                 (ts, ts, json.dumps({"type": "text", "text": "hello"})))
     conn.commit()
     conn.close()
     yield db_path
