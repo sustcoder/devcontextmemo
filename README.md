@@ -157,7 +157,7 @@ DRAFT → CANDIDATE → ACTIVE → COLD → STALE → DEPRECATED
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `OPENCODE_DB_PATH` | OpenCode SQLite 路径 | `~/.config/opencode/opencode.db` |
+| `OPENCODE_DB_PATH` | OpenCode SQLite 路径 | `~/.local/share/opencode/opencode.db` |
 | `FILESYSTEM_SCAN_PATHS` | 文件夹扫描路径 | `[]`（不启用） |
 | `FILESYSTEM_FILE_PATTERNS` | 文件类型过滤 | `["*.jsonl", "*.md", "*.yaml"]` |
 | `POLL_INTERVAL_MS` | 轮询间隔 | `500` |

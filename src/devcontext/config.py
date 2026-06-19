@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     arbitration_dual_discard_threshold: float = 0.40
 
     # 采集配置
-    opencode_db_path: str = "~/.config/opencode/opencode.db"
+    opencode_db_path: str = "~/.local/share/opencode/opencode.db"
     poll_interval_ms: int = 500
     buffer_max_messages: int = 200
     buffer_max_tokens: int = 6000

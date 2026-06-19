@@ -66,10 +66,10 @@ class OpenCodeSQLiteAdapter(BaseAdapter):
     def incremental_query(self, watermarks: dict[str, Any]) -> list[dict[str, Any]]:
         """增量查询：按 watermark 拉取新消息。
 
-        使用只读连接查询 OpenCode SQLite，仅返回 message.id > watermark 的记录。
+        查询 opencode 实际 schema：session + message(data JSON) + part(data JSON)。
 
         Args:
-            watermarks: {"last_message_id": str} 水位线。
+            watermarks: {"checkpoint": str} 水位线（消息 ID）。
 
         Returns:
             标准化后的新消息列表。
@@ -84,18 +84,20 @@ class OpenCodeSQLiteAdapter(BaseAdapter):
         rows = conn.execute(
             """SELECT
                 m.id,
-                m.conversation_id AS session_id,
-                m.role,
-                m.created_at AS timestamp,
+                m.session_id,
+                m.time_created AS timestamp,
+                json_extract(m.data, '$.role') AS role,
                 GROUP_CONCAT(
-                    p.type || ':' || COALESCE(p.content, ''), '\n'
+                    json_extract(p.data, '$.type') || ':'
+                    || COALESCE(json_extract(p.data, '$.text'), ''),
+                    '\n'
                 ) AS parts
             FROM message m
             JOIN (
-                SELECT DISTINCT conversation_id
+                SELECT DISTINCT session_id
                 FROM message
                 WHERE id > ?
-            ) a ON m.conversation_id = a.conversation_id
+            ) a ON m.session_id = a.session_id
             LEFT JOIN part p ON p.message_id = m.id
             WHERE m.id > ?
             GROUP BY m.id
