@@ -181,3 +181,26 @@
 4. `_process_existing_batches()` 已有 status 检查逻辑，无需修改（自动跳过 failed/done）
 
 **经验：** 流水线的错误处理不能是一层大 `try/except`，必须每步独立。否则前一步的失败会被后一步的报错掩盖，定位问题困难。失败状态必须持久化，否则重启后无限重试。
+
+---
+
+## #11: 状态机 `staged → active` 缺失导致绿色通道被阻断
+
+**日期:** 2026-06-19
+**关联:** ALLOWED_TRANSITIONS + Consolidator
+
+**问题：** LLM 提炼正常，知识已写入 `knowledge/` 目录，但 Consolidator 报错：
+```
+Invalid transition staged→active for kw-20260619-014, skipping
+```
+
+**根因：** `promotion.py` 的 T2 绿色通道规则允许 `staged + confidence ≥ 0.95 → active`，但 `ALLOWED_TRANSITIONS` 矩阵中 `staged` 没有 `active`。Consolidator 调用 `is_valid_transition` 校验时拒绝了这条转换。
+
+**同时发现：** Writer 写入的知识初始状态是 `staged`，但管道知识已经过 validate + dedup，不应退回 `staged`。`staged` 是给 MCP 手动写入的起点。
+
+**修复：**
+1. `ALLOWED_TRANSITIONS["staged"]` 加 `"active"`
+2. `Writer` 默认状态 `staged` → `candidate`
+3. 新增 68 个状态机测试覆盖全部转换
+
+**经验：** promotion 逻辑和 ALLOWED_TRANSITIONS 是双向独立维护的，没有编译期检查。修改其中一处必须检查另一处是否匹配。

@@ -86,9 +86,55 @@ serve() 启动
   → _load_domain_tree()
       → domain-tree.yaml 存在？
           ├─ 是 → yaml.safe_load() → 返回 dict
-          └─ 否 → 返回 {}
+           └─ 否 → 返回 {}
   → Extractor(llm_client, domain_tree, staging_dir)
       → is_valid_domain(domain, tree)
           ├─ tree 为空 → return True（自动模式）
           └─ tree 有值 → return domain in tree（校验模式）
 ```
+
+---
+
+## #3: 知识状态机与绿色通道（T2）
+
+**日期:** 2026-06-19
+**关联:** `ALLOWED_TRANSITIONS` + `Writer` + `Consolidator`
+
+**状态机设计:**
+
+```
+                     ┌───────── T3 ──────────┐
+                     ▼                       │
+staged ─────────► candidate ──► active ──► cold ──► stale ──► deprecated ──┐
+   │                  │           │          │         │                    │
+   │  T4              │  T5       │ T9       │ T12     │ T15               │ T20
+   ▼                  ▼           ▼          ▼         ▼                    │
+pending_review ──► active     draft ──► active  （复活）                    │
+   │                                                    ▲                  │
+   └──────────────────── T6 ───────────────────────────┘                  │
+                                                                          │
+                     └──────────────── T2 绿色通道 ────────────────────────┘
+                    staged + confidence ≥ 0.95 → active（直接飞跃）
+```
+
+**两条晋升路径:**
+
+| 场景 | 起始状态 | 晋升路径 | 哪层触发 |
+|------|:--:|------|------|
+| 管道自动采集 | `candidate` | Writer 写入 → Consolidator `candidate → active` | Step 5 + Step 6 |
+| MCP 手动写入 | `staged` | T2 绿色通道 `staged → active`（confidence ≥ 0.95） | Step 6 |
+| MCP 手动写入 | `staged` | T3 `staged → candidate → ...`（confidence < 0.95） | Step 6 |
+
+**关键决策（why Writer 写 candidate 而非 staged）:**
+
+历史上一度 `ALLOWED_TRANSITIONS` 缺少 `staged → active`，导致 T2 绿色通道被阻断（`Invalid transition staged→active`）。修复时发现了更深层的问题：
+
+- `staged` 是给 **MCP 手动写入** 的知识起点（未经 verify/dedup）
+- 管道知识已经过 **Step 3 验证 + Step 4 去重**，不应再退回 `staged`
+- 所以 Writer 改为写 `candidate`，表示「已通过质量检查，等待晋升评估」
+
+**测试覆盖:** 68 个状态机测试（`tests/unit/test_state_machine.py`），包括：
+- 28 条 ALLOWED_TRANSITIONS 全量参数化验证
+- 26 条明确禁止的跨级跳跃
+- 6 条关键生命周期路径（绿色通道、审核、冷却、复活、草稿晋升等）
+- 防御性测试（同状态、未知状态、deprecated 循环）
