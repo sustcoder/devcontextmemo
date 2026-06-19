@@ -68,3 +68,37 @@ class BaseAdapter(ABC):
             标准化后的记录列表。
         """
         return [self.normalize(r) for r in raw_records]
+
+    def incremental_query(self, watermarks: dict) -> list[dict[str, Any]]:
+        """增量查询：按 watermark 拉取新消息。
+
+        Args:
+            watermarks: {source_name: last_checkpoint} 水位线字典。
+
+        Returns:
+            新消息列表，每条消息为 dict[str, Any]。
+
+        Raises:
+            NotImplementedError: 子类可覆写。
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement incremental_query"
+        )
+
+    def fetch_full(self) -> list[dict[str, Any]]:
+        """全量查询：冷启动或手动触发时使用。
+
+        默认调用 incremental_query({})。
+
+        Returns:
+            全部消息列表。
+        """
+        return self.incremental_query({})
+
+    def validate_connection(self) -> bool:
+        """检查数据源是否可访问。
+
+        Returns:
+            True 如果数据源可访问。
+        """
+        return True
