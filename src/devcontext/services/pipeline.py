@@ -1,5 +1,6 @@
 """流水线编排服务 — 多 collector 调度 + 回调链 + 生命周期管理。"""
 
+import asyncio
 import logging
 from pathlib import Path
 
@@ -131,7 +132,7 @@ class PipelineService:
         self._running = True
         for collector in self.collectors:
             if hasattr(collector, "start"):
-                collector.start()
+                asyncio.create_task(collector.start())
         logger.info(
             "PipelineService started with %d collector(s)",
             len(self.collectors),
@@ -142,7 +143,7 @@ class PipelineService:
         self._running = False
         for collector in self.collectors:
             if hasattr(collector, "stop"):
-                collector.stop()
+                await collector.stop()
         logger.info("PipelineService stopped")
 
     def capture(self, *, dry_run: bool = False) -> dict:

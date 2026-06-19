@@ -90,10 +90,21 @@ def serve():
 
         logger.info("Steps 2-6 enabled (LLM configured)")
     else:
-        logger.warning(
-            "Steps 2-6 disabled: set DEVCONTEXT_LLM_API_KEY + "
-            "DEVCONTEXT_LLM_BASE_URL to enable knowledge extraction"
+        missing = []
+        if not settings.llm_api_key:
+            missing.append("DEVCONTEXT_LLM_API_KEY")
+        if not settings.llm_base_url:
+            missing.append("DEVCONTEXT_LLM_BASE_URL")
+        msg = (
+            "LLM 未配置，知识提炼流水线（Steps 2-6）无法启动。\n"
+            "请设置以下环境变量：\n"
+            f"  export DEVCONTEXT_LLM_API_KEY=<your-api-key>\n"
+            f"  export DEVCONTEXT_LLM_BASE_URL=<api-base-url>\n"
+            f"  export DEVCONTEXT_LLM_MODEL=<model-name>    # 可选，默认: abab6.5s-chat\n"
+            f"当前缺失: {', '.join(missing)}"
         )
+        logger.error(msg)
+        raise SystemExit(msg)
 
     pipeline = PipelineService(
         collectors=collectors,
