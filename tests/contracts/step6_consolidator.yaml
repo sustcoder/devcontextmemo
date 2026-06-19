@@ -1,0 +1,82 @@
+contract:
+  step: step6_consolidator
+  version: "1.1"
+  description: "巩固 — 晋升评估 (V2.1) + 状态迁移 + 修剪触发 + 文件移动"
+
+input:
+  source: "SQLite knowledge_index table (all statuses)"
+  db_path: ".devContextMemo/devcontextmemo.db"
+
+preconditions:
+  - SQLite DB is accessible
+  - knowledge records exist in DB
+  - promotion formula V2.1 is loaded
+  - pruning rules are loaded
+  - is_valid_transition (V2.0 T table) is available
+
+output:
+  updated_db_records:
+    - status transitions (staged→candidate, staged→pending_review, staged→draft, candidate→active)
+    - deprecation_reason updates
+    - stale_sub_phase / stale_check_count / stale_entered_at updates
+    - locked_promotion_score updates (T3 时锁定)
+    - confidence updates (STALE 折扣)
+  moved_files:
+    - staging → knowledge/{domain}/ (candidate→active)
+    - knowledge → deprecated/ (→deprecated)
+  consolidation_report:
+    - total_scanned, promotions, pruned, stale_marked, cold_marked, moved_files, errors
+
+assertions:
+  promotion:
+    - base_score = confidence × 0.70 + anchor_bonus × 0.15 + calibration_recency × 0.15
+    - confidence >= 0.95 → green channel (direct to ACTIVE) [T2, Step 5 only]
+    - base_score >= 0.82 → CANDIDATE [T3]
+    - 0.65 <= base_score < 0.80 → PENDING_REVIEW [T4]
+    - base_score < 0.65 → DRAFT [T5]
+    - CANDIDATE hysteresis: 0.82 in, 0.80 out
+    - T6: candidate→active with locked_score >= 0.80
+    - T3 entry locks promotion_score (locked_promotion_score)
+  pruning:
+    - Layer 1: DRAFT > 90d → DEPRECATED (stale_draft); confidence<0.6 + age>30d → low_quality [T19]
+    - Layer 2: COLD > 365d → STALE; prune_priority>=0.70 → STALE [T11/T13]
+    - Layer 3: no anchor + age>90d → STALE(suspicious) [T14]; no anchor + prune_priority>=0.70 + age>=60d → STALE [T25]
+    - STALE(deep) / stale_check_count>=3 → DEPRECATED [T16]
+    - T14 priority over T25
+    - T11: active+anchor+low_usage → COLD
+    - soft_limit=500 (warning), hard_limit=2000 (force prune)
+  status_transitions:
+    - all transitions validated by is_valid_transition (V2.0 T table)
+    - invalid transitions blocked with warning
+  stale_subphase:
+    - suspicious (count=1): confidence × 0.80
+    - confirmed (count=2): confidence × 0.60
+    - deep (count=3): confidence × 0.40 → triggers T16
+  file_moves:
+    - staging → knowledge/{domain}/ on candidate→active
+    - knowledge → deprecated/ on →deprecated
+    - uri field updated after move
+  dry_run:
+    - dry_run=True → evaluate only, no DB updates or file moves
+
+evidence:
+  required:
+    - before/after DB snapshot
+    - promotion score log
+    - pruning decision log
+    - status transition audit trail
+    - ConsolidationReport
+
+failure_modes:
+  BLOCK:
+    - DB inaccessible
+    - promotion formula not loaded
+  FAIL:
+    - base_score calculation error
+    - invalid status transition attempted
+    - pruning of protected knowledge (supplement parent)
+    - hysteresis violation
+    - file move failure (non-fatal, logged)
+  PASS:
+    - all assertions pass
+    - evidence complete

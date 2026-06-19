@@ -1,0 +1,7 @@
+[
+  {"id": "k-001", "status": "DRAFT", "confidence": 0.88, "code_verified": 0, "last_calibrated_at": null, "created_at": "2025-03-01T00:00:00Z", "lx": "L2", "sy": "S3", "depth": "KH", "domain": "order", "knowledge_text": "支付流程使用状态机模式"},
+  {"id": "k-002", "status": "STAGED", "confidence": 0.92, "code_verified": 1, "last_calibrated_at": "2025-06-15T00:00:00Z", "created_at": "2025-02-01T00:00:00Z", "lx": "L3", "sy": "S4", "depth": "KW", "domain": "order", "knowledge_text": "支付超时默认 30 秒"},
+  {"id": "k-003", "status": "ACTIVE", "confidence": 0.95, "code_verified": 1, "last_calibrated_at": "2024-06-01T00:00:00Z", "created_at": "2024-01-01T00:00:00Z", "lx": "L0", "sy": "S1", "depth": "KW", "domain": "convention", "knowledge_text": "团队偏好使用 Tab 缩进"},
+  {"id": "k-004", "status": "ACTIVE", "confidence": 0.82, "code_verified": 0, "last_calibrated_at": "2025-06-10T00:00:00Z", "created_at": "2025-01-01T00:00:00Z", "lx": "L2", "sy": "S3", "depth": "KH", "domain": "order", "knowledge_text": "退款流程需要 3 步审批"},
+  {"id": "k-005", "status": "COLD", "confidence": 0.75, "code_verified": 0, "last_calibrated_at": "2024-01-01T00:00:00Z", "created_at": "2023-06-01T00:00:00Z", "lx": "L3", "sy": "S5", "depth": "KH", "domain": "payment", "knowledge_text": "旧版支付网关使用 SOAP 协议"}
+]

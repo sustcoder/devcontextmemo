@@ -1,0 +1,52 @@
+contract:
+  step: step1_batcher
+  version: "1.1"
+  description: "攒批 — 从原始存储按 session 分批 → JSONL 缓冲 + _meta.yaml"
+
+input:
+  source: "{raw_dir}/session_*.jsonl"
+  format: |
+    {"session_id": "uuid", "seq": 1, "role": "user", "content": "...", "timestamp": "...", "source": "..."}
+
+preconditions:
+  - raw_dir contains at least one session_*.jsonl
+  - session files are valid JSONL
+  - _flushed tracking mechanism is available (via _meta.yaml scan)
+
+output:
+  format: "batch-{session_id}-{timestamp}.jsonl"
+  path: "{staging_dir}/"
+  required_fields: [session_id, seq, role, content, timestamp, source]
+  metadata_file: "batch-{session_id}-{timestamp}_meta.yaml"
+  metadata_fields: [batch_id, session_id, message_count, token_count, captured_at, status]
+
+assertions:
+  format:
+    - output is valid JSONL
+    - all required_fields present in each line
+    - batch file is non-empty (unless no unflushed sessions exist)
+  dedup:
+    - each session appears in at most one unflushed batch
+    - _flushed flag prevents re-batching of same session (via _meta.yaml scan)
+  ordering:
+    - messages within batch are ordered by seq
+  token_counting:
+    - token_count is positive integer
+    - token_count >= threshold triggers batching (when flush_all=False)
+    - flush_all=True batches all unflushed sessions regardless of token count
+
+evidence:
+  required:
+    - output batch file(s)
+    - _meta.yaml file(s)
+    - batch metadata (session_ids included, message count, token count)
+
+failure_modes:
+  BLOCK:
+    - raw directory empty or missing
+    - output directory not writable
+  FAIL:
+    - batch file format invalid
+    - session dedup violated (same session in multiple batches)
+    - message ordering broken
+    - _meta.yaml missing required fields

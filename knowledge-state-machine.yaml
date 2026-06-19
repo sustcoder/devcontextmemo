@@ -1,0 +1,212 @@
+# devContextMemo 知识状态机 V1.1
+# 机器可读，可生成代码校验逻辑和测试用例
+# 参与 CI 检查：状态迁移合法性、不变量约束
+#
+# V1.0 → V1.1 变更（2026-06-18）：
+# - 对齐 V2.0 晋升生命周期设计 + SQLite Schema V1.1
+# - 状态名大写 7 态 → 小写 8 态（新增 pending_review）
+# - VALID → active，新增 pending_review/draft 为 staging/ 评估分流
+# - 迁移规则严格按 V2.0 T1-T25 跃迁表
+# - draft 无 →staged 直接跃迁（V2.0 T 表）
+# - cold 无 →active 捷径（必须经 cold→stale→active 完整路径）
+
+schema_version: "1.1"
+generated_at: "2026-06-18"
+source_doc: "docs/devContextMemo-晋升生命周期-设计-V2.0.md"
+implementation: "src/devcontext/models/enums.py::ALLOWED_TRANSITIONS"
+
+states:
+  - name: staged
+    description: 已写入 staging/，等待首次评估（T1）
+    physical_dir: staging/
+    is_terminal: false
+    allowed_next: ["staged", "candidate", "pending_review", "draft", "deprecated"]
+  - name: candidate
+    description: 评分 ≥ 0.82（滞回上限），建议晋升（T3）
+    physical_dir: staging/
+    is_terminal: false
+    entry_condition: "promotion_score >= 0.82"
+    allowed_next: ["candidate", "active", "pending_review", "deprecated"]
+  - name: pending_review
+    description: 0.65 ≤ score < 0.80，建议人工审核（T4）
+    physical_dir: staging/
+    is_terminal: false
+    entry_condition: "0.65 <= promotion_score < 0.80"
+    allowed_next: ["pending_review", "active", "deprecated"]
+  - name: draft
+    description: score < 0.65，需人工深入确认（T5）
+    physical_dir: staging/
+    is_terminal: false
+    entry_condition: "promotion_score < 0.65"
+    allowed_next: ["draft", "active", "deprecated"]
+  - name: active
+    description: 活跃使用的可信知识，位于 knowledge/（T2/T6/T7/T9）
+    physical_dir: knowledge/
+    is_terminal: false
+    allowed_next: ["active", "cold", "stale", "deprecated"]
+  - name: cold
+    description: 正确但低频，code_verified=1 保护中（T11）
+    physical_dir: knowledge/
+    is_terminal: false
+    entry_condition: "code_verified=1 AND (used_count<3 OR last_used_at>90d)"
+    allowed_next: ["cold", "stale", "deprecated"]
+  - name: stale
+    description: 关联代码可能已变更，含 suspicious/confirmed/deep 3 子阶段（T12/T13/T14/T25）
+    physical_dir: knowledge/
+    is_terminal: false
+    allowed_next: ["stale", "active", "deprecated"]
+    auto_trigger:
+      - condition: "T12: INCONSISTENT + 低确定度"
+        action: "mark stale(suspicious)"
+      - condition: "T14: code_verified=0 AND age>90d"
+        action: "mark stale(suspicious)"
+  - name: deprecated
+    description: 已失效，位于 deprecated/，仅可 T20 人工恢复
+    physical_dir: deprecated/
+    is_terminal: true
+    allowed_next: ["deprecated", "staged"]
+
+# V2.0 T1-T25 跃迁规则（权威来源：晋升生命周期设计 V2.0 §二）
+transitions:
+  # RAW → STAGED/ACTIVE（写入分流，RAW 不落 DB）
+  - from: staged
+    to: candidate
+    trigger: promotion_evaluation
+    condition: "promotion_score >= 0.82"
+    transition_id: T3
+  - from: staged
+    to: pending_review
+    trigger: promotion_evaluation
+    condition: "0.65 <= promotion_score < 0.80"
+    transition_id: T4
+  - from: staged
+    to: draft
+    trigger: promotion_evaluation
+    condition: "promotion_score < 0.65"
+    transition_id: T5
+
+  # CANDIDATE 滞回 + 晋升
+  - from: candidate
+    to: active
+    trigger: promotion_evaluation
+    condition: "locked_promotion_score >= 0.80"
+    transition_id: T6
+  - from: candidate
+    to: pending_review
+    trigger: promotion_evaluation
+    condition: "promotion_score < 0.80"
+    transition_id: T3_exit
+
+  # 人工审核裁决
+  - from: pending_review
+    to: active
+    trigger: manual_review
+    condition: "human_approved"
+    transition_id: T7
+  - from: pending_review
+    to: deprecated
+    trigger: manual_review
+    condition: "human_rejected"
+    transition_id: T8
+  - from: draft
+    to: active
+    trigger: manual_review
+    condition: "human_approved"
+    transition_id: T9
+  - from: draft
+    to: deprecated
+    trigger: manual_review
+    condition: "human_rejected"
+    transition_id: T10
+
+  # ACTIVE 下降路径
+  - from: active
+    to: cold
+    trigger: pruning_scan
+    condition: "code_verified=1 AND (used_count<3 OR last_used_at>90d)"
+    transition_id: T11
+  - from: active
+    to: stale
+    trigger: calibration_event
+    condition: "INCONSISTENT + certainty<0.80"
+    transition_id: T12
+  - from: active
+    to: stale
+    trigger: pruning_scan
+    condition: "code_verified=0 AND age>90d"
+    transition_id: T14
+  - from: active
+    to: stale
+    trigger: pruning_scan
+    condition: "code_verified=0 AND prune_priority>=0.70 AND age>=60d"
+    transition_id: T25
+  - from: active
+    to: deprecated
+    trigger: conflict_resolution
+    condition: "superseded by higher-confidence knowledge"
+    transition_id: T17
+  - from: active
+    to: deprecated
+    trigger: calibration_event
+    condition: "INCONSISTENT + certainty>=0.80"
+    transition_id: T18
+
+  # COLD 下降路径（无 →active 捷径，V2.0 T 表）
+  - from: cold
+    to: stale
+    trigger: calibration_event
+    condition: "code_verified became 0"
+    transition_id: T13
+
+  # STALE 恢复 / 废弃
+  - from: stale
+    to: active
+    trigger: recalibration
+    condition: "calibration_result == CONSISTENT"
+    transition_id: T15
+  - from: stale
+    to: deprecated
+    trigger: pruning_scan
+    condition: "stale_check_count >= 3 OR stale_age > 90d"
+    transition_id: T16
+
+  # DRAFT 低质清理
+  - from: draft
+    to: deprecated
+    trigger: pruning_scan
+    condition: "confidence < 0.6 AND age > 30d"
+    transition_id: T19
+
+  # 人工恢复（deprecated 唯一出口）
+  - from: deprecated
+    to: staged
+    trigger: manual_review
+    condition: "operator confirms restore"
+    transition_id: T20
+
+  # 任意状态 → deprecated（手动废弃，覆盖所有状态）
+  - from: ANY
+    to: deprecated
+    trigger: manual_deprecate
+    condition: "operator confirms"
+
+# 不变量（V2.0 + 架构约束）
+invariants:
+  - "同一 (code_entry_id, domain) 组合最多只能有 1 条 NON-DEPRECATED 知识"
+  - "active 状态知识的 promotion_score 必须 >= 0.80（滞回下限）"
+  - "candidate 状态知识的 promotion_score 必须 >= 0.82（滞回上限）"
+  - "deprecated 状态知识不得出现在任何注入层级"
+  - "candidate/pending_review/draft/staged 状态知识不得被注入（L1/L2/L3 均跳过）"
+  - "cold 状态知识不得直接回 active（必须经 cold→stale→active 完整路径）"
+  - "draft 状态知识不得直接回 staged（V2.0 T 表无此跃迁）"
+
+# 状态机校验伪代码（供代码生成参考）
+# 实现: src/devcontext/models/enums.py::is_valid_transition
+# for each transition in transitions:
+#     assert from_state in states[name].allowed_next
+#     if entry_condition:
+#         assert eval(entry_condition)
+#
+# for each invariant:
+#     # 在 promotion/calibration 等关键操作后执行校验
+#     assert eval(invariant)

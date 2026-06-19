@@ -1,0 +1,18 @@
+[
+  {
+    "session_id": "sess-001",
+    "knowledge_text": "支付流程使用状态机模式，由 OrderService 负责编排",
+    "lx": "L2", "sy": "S3", "depth": "KH", "domain": "order",
+    "confidence": 0.88,
+    "occurred_at": "2025-06-18T10:01:00Z",
+    "source_messages": [2]
+  },
+  {
+    "session_id": "sess-001",
+    "knowledge_text": "支付超时默认 30 秒，可在 application.yml 中配置",
+    "lx": "L3", "sy": "S4", "depth": "KW", "domain": "order",
+    "confidence": 0.92,
+    "occurred_at": "2025-06-18T10:03:00Z",
+    "source_messages": [4]
+  }
+]

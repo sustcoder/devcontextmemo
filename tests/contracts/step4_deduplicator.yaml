@@ -1,0 +1,46 @@
+contract:
+  step: step4_deduplicator
+  version: "1.1"
+  description: "去重 — Jaccard 语义相似度 + top_similar_id + 重复标记"
+
+input:
+  source: "knowledge_{session_id}.jsonl (with content_hash, semantic_hash, code_verified)"
+  reference: existing knowledge records (list of dicts with id + knowledge_text)
+
+preconditions:
+  - knowledge JSONL file exists and is non-empty
+  - existing_records provided (can be empty list for first run)
+
+output:
+  format: "knowledge_{session_id}.jsonl (updated)"
+  added_fields: [top_similar_id, jaccard_score, is_duplicate]
+  top_similar_id: "id of most similar existing knowledge, or null"
+  jaccard_score: "float in [0, 1]"
+  is_duplicate: "bool — true if content_hash exact match or jaccard >= 0.90"
+
+assertions:
+  similarity:
+    - each(new_knowledge).jaccard_score in [0, 1]
+    - jaccard_score > 0.90 → is_duplicate = true (potential duplicate)
+    - jaccard_score <= 0.30 → top_similar_id is null (sufficiently different)
+    - content_hash exact match → is_duplicate = true, jaccard_score = 1.0
+  integrity:
+    - all input fields preserved
+    - no knowledge items dropped
+  embedding_interface:
+    - embedding/cosine similarity interface reserved (not implemented in Phase 4)
+    - future Phase can add cosine_similarity field alongside jaccard_score
+
+evidence:
+  required:
+    - output knowledge file (with dedup fields)
+    - similarity computation log
+
+failure_modes:
+  BLOCK:
+    - knowledge file corrupted
+    - existing_records format invalid
+  FAIL:
+    - jaccard_score outside [0, 1]
+    - top_similar_id references non-existent record
+    - input fields lost

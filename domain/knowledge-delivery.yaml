@@ -1,0 +1,225 @@
+# devContextMemo 领域聚合卡 V1.0 — knowledge-delivery
+# 知识交付：检索 + 注入（MCP Tool + AGENTS.md）
+# AI 修改 injection / search / mcp 相关代码前必读
+
+schema_version: "1.0"
+generated_at: "2026-06-18"
+domain: knowledge-delivery
+source_doc: "design/devContextMemo-系统架构设计-V1.0.md"
+
+description: |
+  知识交付是 devContextMemo 的核心价值出口。
+  采集和校准的知识最终通过三层注入架构（L1/L2/L3）交付给 AI 上下文。
+  这条链路决定了「AI 能不能在正确的时间拿到正确的知识」。
+
+# ============ 模块列表 ============
+
+modules:
+  - name: InjectionService
+    layer: service
+    file: "src/devcontextmemo/services/injection.py"
+    trigger: ["S1/S2 KW 累计 ≥ 3 条变更", "MCP Tool get_knowledge 调用", "MCP Tool get_experience 调用"]
+    responsibility: "三层注入路由推导 + AGENTS.md 生成 + 注入内容维护"
+    design_decision: D4  # MD 权威 + DB 索引
+    risk: high  # 注入错误知识会直接误导 AI
+    change_constraints:
+      - "Token 预算（≤ 4K）变更需重新评估截断策略"
+      - "注入路由推导逻辑（route()）变更需同步更新 knowledge-state-machine.yaml"
+      - "AGENTS.md 生成 prompt 模板变更需人工 review"
+    key_functions:
+      - "route(lx, sy, depth) -> InjectionLayer"
+      - "generate_agents_md() -> draft_path"
+      - "build_l2_response(results) -> ToolResponse"
+      - "build_l3_response(results) -> ToolResponse"
+
+  - name: SearchEngine
+    layer: storage
+    file: "src/devcontextmemo/storage/search.py"
+    trigger: ["MCP Tool get_knowledge 调用", "dev search 命令"]
+    responsibility: "FTS5 全文搜索 + 语义重排 + 候选 top-k 过滤"
+    risk: low
+    change_constraints:
+      - "FTS5 schema 变更需全量重建索引"
+      - "语义重排 LLM 调用成本需监控（token_usage 字段）"
+
+  - name: MCP Server (Tools + Resources)
+    layer: interaction
+    file: "src/devcontextmemo/mcp/server.py"
+    trigger: ["OpenCode 会话启动", "LLM 主动调用 Tool"]
+    responsibility: "暴露 get_knowledge / get_experience / search / review / dream / config Tools"
+    risk: medium
+    change_constraints:
+      - "Tool 签名变更需同步更新 OpenCode 的 Tool 注册"
+      - "新增 Tool 需在 architecture.yaml 的 mcp_tools 清单中登记"
+
+  - name: AGENTS.md Maintenance
+    layer: service  # InjectionService 子功能
+    file: "由 InjectionService.generate_agents_md() 维护"
+    trigger: "S1/S2 KW 累计 ≥ 3 条新增/变更"
+    responsibility: "生成 .devContextMemo/AGENTS.knowledge.md（动态知识注入文件）"
+    risk: medium
+    change_constraints:
+      - "AGENTS.md 内容变更必须经过 dev review 人工确认"
+      - "Token 截断后的注释标记不得被 LLM 误认为知识内容"
+
+# ============ 三层注入架构（核心价值交付路径） ============
+
+injection_architecture:
+  description: "知识按成本 + 相关性分三层注入 AI 上下文"
+
+  L1:
+    name: "AGENTS.md 恒常注入"
+    trigger: "每次 OpenCode 会话启动（自动）"
+    content_scope: "S1/S2 + KW 知识"
+    token_budget: "<= 4K"
+    update_flow:
+      - "S1/S2 KW 累计 ≥ 3 条变更 → 触发 generate_agents_md()"
+      - "生成草稿：.devContextMemo/staging/AGENTS.knowledge.draft.md"
+      - "dev review 人工确认"
+      - "确认后移动至：.devContextMemo/AGENTS.knowledge.md"
+      - "下次会话生效"
+    notes:
+      - "L1 注入的知识是『每次都在的』，选择标准是稳定性（S1/S2）+ 基础事实（KW）"
+
+  L2:
+    name: "MCP Tool get_knowledge 按需检索"
+    trigger: "LLM 判断需要领域知识时主动调用"
+    content_scope: "S1/S2 + KH/KY, S3/S4 + 任意 Depth"
+    token_cost: "~1-3K per call"
+    update_flow:
+      - "LLM 调用 get_knowledge(domain, query, max_tokens)"
+      - "SearchEngine FTS5 全文搜索 → 候选 top-k"
+      - "语义重排 → 相关性打分"
+      - "InjectionService.route_to_l2() 过滤"
+      - "返回 URI 列表 + 摘要"
+    notes:
+      - "L2 是主要检索入口，LLM 可以主动决定要不要调用"
+
+  L3:
+    name: "MCP Tool get_experience 经验检索"
+    trigger: "事件触发 / LLM 判断需要历史经验"
+    content_scope: "S5 + 任意 Depth"
+    token_cost: "~0.5-1.5K per call"
+    notes:
+      - "L3 仅在 L1/L2 无法满足时启用（低优先级检索）"
+      - "S5 知识是『历史经验』，稳定性低但信息密度高"
+
+# ============ 注入路由推导表（InjectionService.route() 核心逻辑） ============
+
+injection_route_table:
+  - condition: "lx in (S1, S2) and depth == KW"
+    result: L1
+    token_cost: "含在 4K 预算内"
+    trigger: "每次会话自动"
+  - condition: "lx in (S1, S2) and depth in (KH, KY)"
+    result: L2
+    token_cost: "~1-3K/call"
+    trigger: "LLM 判断需要"
+  - condition: "lx in (S3, S4)"
+    result: L2
+    token_cost: "~1-3K/call"
+    trigger: "LLM 判断需要"
+  - condition: "lx == S5"
+    result: L3
+    token_cost: "~0.5-1.5K/call"
+    trigger: "事件触发"
+
+# ============ Token 截断策略（L1 预算不足时） ============
+
+token_truncation:
+  budget: 4096  # tokens
+  priority:
+    - priority: 1
+      knowledge_type: "S1-KW（原则级）"
+      strategy: "不可截断，全部保留"
+    - priority: 2
+      knowledge_type: "L0-S2-KW（全局架构）"
+      strategy: "至少保留 3 条，超出按 calibration_recency 降序"
+    - priority: 3
+      knowledge_type: "L1-S2-KW（领域架构）"
+      strategy: "按 calibration_recency 降序截断"
+  notes:
+    - "截断末尾追加注释标记被截断条目数"
+    - "截断决策需记录到 operation_logs（供后续分析）"
+
+# ============ MCP Tools 清单 ============
+
+mcp_tools:
+  - name: get_knowledge
+    description: "按需检索知识（L2 注入）"
+    parameters: ["domain: str", "query: str", "max_tokens: int = 2048"]
+    returns: "KnowledgeItem[] + 注入层级标记"
+
+  - name: get_experience
+    description: "经验检索（L3 注入）"
+    parameters: ["query: str", "max_tokens: int = 1024"]
+    returns: "ExperienceSummary[]"
+
+  - name: search
+    description: "全文搜索（FTS5 + 语义重排）"
+    parameters: ["query: str", "domain: str = null"]
+    returns: "SearchResult[]"
+
+  - name: review
+    description: "审核交互（DRAFT → STAGED 确认）"
+    parameters: ["action: enum [list, approve, reject]", "knowledge_id: str = null"]
+    returns: "ReviewResult"
+
+  - name: dream
+    description: "主动扫描（代码变更 → 校准 + 数据健康检查）"
+    parameters: ["scope: enum [calibration, health, coverage, incident]"]
+    returns: "DreamReport"
+
+  - name: config
+    description: "配置管理"
+    parameters: ["action: enum [get, set]", "key: str = null", "value: str = null"]
+    returns: "ConfigResult"
+
+# ============ 跨模块不变量 ============
+
+invariants:
+  - "L1 注入的内容必须全部来自 S1/S2 + KW，不得混入其他分类"
+  - "get_knowledge Tool 返回的 knowledge_id 必须对应 NON-DEPRECATED 状态"
+  - "AGENTS.md 草稿未经 dev review 确认不得覆盖生效版本"
+  - "InjectionService.route() 的判定结果变更时，必须重新生成 AGENTS.md"
+  - "SearchEngine 的 FTS5 索引必须与 MD 文件内容一致（DataHealthEngine H3 检测）"
+
+# ============ 关键流程场景 ============
+
+key_scenarios:
+  - scenario: "OpenCode 会话启动 → L1 注入"
+    steps:
+      - "OpenCode 读取项目根目录 .devContextMemo/AGENTS.knowledge.md"
+      - "该文件内容自动注入系统 prompt"
+      - "AI 获得 S1/S2 + KW 知识（零额外 Token 成本）"
+    notes:
+      - "如果 .devContextMemo/AGENTS.knowledge.md 不存在，L1 注入为空（不报错）"
+
+  - scenario: "LLM 需要领域知识 → L2 检索"
+    steps:
+      - "LLM 判断需要领域知识，调用 get_knowledge(domain, query)"
+      - "SearchEngine FTS5 搜索 → top-k 候选"
+      - "语义重排 → 过滤"
+      - "返回摘要（~1-3K tokens）"
+      - "LLM 基于摘要决定是否获取完整内容"
+    notes:
+      - "LLM 可以多次调用 get_knowledge，每次都是独立 Tool call"
+
+  - scenario: "S1/S2 KW 知识变更 → AGENTS.md 更新"
+    trigger: "累计 ≥ 3 条新增/变更"
+    steps:
+      - "InjectionService 触发 generate_agents_md()"
+      - "收集符合条件的知识（S1/S2 + KW, ≤ 4K tokens）"
+      - "LLM 汇总生成 Markdown"
+      - "写入 .devContextMemo/staging/AGENTS.knowledge.draft.md"
+      - "dev review 交互确认"
+      - "确认后移动至 .devContextMemo/AGENTS.knowledge.md"
+    notes:
+      - "未确认前的草稿不影响当前会话的 L1 注入"
+
+# ============ 依赖拓扑 ============
+
+dependency_topology:
+  InjectionService: [SearchEngine, SQLiteStore, LLMClient, KnowledgeItem Model]
+  SearchEngine: [SQLiteStore (FTS5 virtual table), LLMClient (semantic rerank)]
+  MCPServer: [InjectionService, SearchEngine, PipelineService, ReviewService]

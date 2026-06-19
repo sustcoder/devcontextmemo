@@ -1,0 +1,6 @@
+[
+  {"session_id": "sess-001", "seq": 1, "role": "user", "content": "如何实现支付流程？", "timestamp": "2025-06-18T10:00:00Z", "source": "opencode"},
+  {"session_id": "sess-001", "seq": 2, "role": "assistant", "content": "支付流程使用状态机模式，OrderService 负责编排。", "timestamp": "2025-06-18T10:01:00Z", "source": "opencode"},
+  {"session_id": "sess-001", "seq": 3, "role": "user", "content": "超时时间是多少？", "timestamp": "2025-06-18T10:02:00Z", "source": "opencode"},
+  {"session_id": "sess-001", "seq": 4, "role": "assistant", "content": "默认超时 30 秒，可在 application.yml 中配置。", "timestamp": "2025-06-18T10:03:00Z", "source": "opencode"}
+]

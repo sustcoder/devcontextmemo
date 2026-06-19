@@ -1,0 +1,145 @@
+# devContextMemo 领域聚合卡 V1.0 — knowledge-lifecycle
+# 知识生命周期：从采集到巩固的完整流程
+# AI 修改 pipeline / promotion / pruning / health / coldstart 相关代码前必读
+
+schema_version: "1.0"
+generated_at: "2026-06-18"
+domain: knowledge-lifecycle
+source_doc: "design/devContextMemo-系统架构设计-V1.0.md"
+
+description: |
+  知识生命周期管理是 devContextMemo 的核心价值链路。
+  原始对话日志 → 结构化知识条目 → 晋升为可注入知识 → 定期修剪废弃知识。
+  这条链路的质量直接决定最终注入 AI 上下文的知识可靠性。
+
+# ============ 模块列表 ============
+
+modules:
+  - name: ColdStartEngine
+    layer: management
+    file: "src/devcontextmemo/core/init.py"
+    trigger: ["dev init"]
+    responsibility: "项目首次接入时扫描结构，LLM 生成初始知识骨架"
+    design_decision: D60
+    risk: low
+    change_constraints:
+      - "LLM prompt 模板变更需人工 review（影响初始骨架质量）"
+      - "扫描路径白名单变更需同步更新 security.py 的 realpath 校验"
+
+  - name: PipelineService (Step 0-6)
+    layer: service
+    file: "src/devcontextmemo/services/pipeline.py"
+    trigger: ["对话日志攒批达到阈值", "devContextMemo pipeline run"]
+    responsibility: "编排 6 Step 写入流水线全流程"
+    design_decision: D5
+    risk: medium
+    change_constraints:
+      - "Step 5 原子写入顺序（MD first → DB second）不得颠倒"
+      - "Step 6 晋升评估公式（V2.1）变更需决策记录"
+
+  - name: Batcher (Step 1)
+    layer: processing
+    file: "src/devcontextmemo/core/pipeline/batcher.py"
+    responsibility: "JSONL 攒批，防止频繁 LLM 调用"
+    risk: low
+
+  - name: Extractor (Step 2)
+    layer: processing
+    file: "src/devcontextmemo/core/pipeline/extractor.py"
+    responsibility: "LLM 知识提炼 + 三元组分类（Lx×Sy×Depth）"
+    risk: medium
+    change_constraints:
+      - "分类置信度阈值（0.85/0.70）变更需 A/B 验证"
+
+  - name: Validator (Step 3)
+    layer: processing
+    file: "src/devcontextmemo/core/pipeline/validator.py"
+    responsibility: "签名比对 + 安全扫描 + 语义冲突预检"
+    risk: high  # 安全相关
+    change_constraints:
+      - "SecurityScanner 检测规则变更需安全 review"
+
+  - name: Deduplicator (Step 4)
+    layer: processing
+    file: "src/devcontextmemo/core/pipeline/deduplicator.py"
+    responsibility: "Jaccard + 语义去重，输出 top_similar_id"
+    risk: low
+
+  - name: Writer (Step 5)
+    layer: processing
+    file: "src/devcontextmemo/core/pipeline/writer.py"
+    responsibility: "MD → DB 原子写入"
+    design_decision: D60
+    risk: high  # 数据持久化
+    change_constraints:
+      - "原子写入顺序不得颠倒：MD 写入 + fsync → DB 索引更新 → 失败回滚 MD"
+
+  - name: Consolidator (Step 6)
+    layer: processing
+    file: "src/devcontextmemo/core/pipeline/consolidator.py"
+    responsibility: "晋升评估 + 修剪 + 冲突检测 + 校准触发 + supplement 合并"
+    risk: medium
+
+  - name: PromotionEngine
+    layer: management
+    file: "src/devcontextmemo/core/promotion.py"
+    responsibility: "V2.1 晋升公式评估，CANDIDATE 滞回机制"
+    design_decision: D57
+    risk: medium
+    change_constraints:
+      - "base_score 公式权重变更需决策记录"
+      - "滞回阈值（0.82 进 / 0.80 出）变更需重新评估冷启动场景"
+
+  - name: PruningEngine
+    layer: management
+    file: "src/devcontextmemo/core/pruning.py"
+    responsibility: "三层修剪（质量下限 / 使用频率 / 代码锚点）+ 容量管理"
+    risk: low
+
+  - name: DataHealthEngine
+    layer: management
+    file: "src/devcontextmemo/core/health.py"
+    responsibility: "H1-H9 数据校正，防止腐败数据注入"
+    risk: medium
+    change_constraints:
+      - "H1/H3 自动修复逻辑变更需数据备份验证"
+      - "新增 H-issue 类型需同步更新 architecture.yaml 的 health 条目"
+
+# ============ 跨模块不变量 ============
+
+invariants:
+  - "Writer Step 5 失败时，不得执行 Consolidator Step 6"
+  - "PromotionEngine 晋升 CANDIDATE → VALID 必须有人工确认（除非配置跳过）"
+  - "DataHealthEngine H1（MD-DB 漂移）修复时不得丢失 staging/ 目录下的 DRAFT 文件"
+  - "PruningEngine 修剪前必须检查该知识是否正在被 Step 6 处理中"
+  - "ColdStartEngine 生成的 DRAFT 知识必须经过 Validator Step 3（安全扫描）"
+
+# ============ 关键流程场景 ============
+
+key_scenarios:
+  - scenario: "对话日志 → 知识入库（正常流程）"
+    steps: [collector, batcher, extractor, validator, deduplicator, writer, consolidator]
+    notes:
+      - "Step 5 失败会回滚 Step 4 的 MD 写入"
+      - "Step 6 失败不影响已写入的知识，下次 pipeline 会重试"
+
+  - scenario: "知识晋升（CANDIDATE → VALID）"
+    trigger: "consolidator 执行晋升评估"
+    condition: "base_score >= 0.82 and human_approved"
+    notes:
+      - "滞回机制：0.80 <= base_score < 0.82 时保持在 CANDIDATE，不退化"
+
+  - scenario: "数据健康检查（dev dream）"
+    trigger: "dev dream 命令或定时任务"
+    steps: [DataHealthEngine 全量扫描, 自动修复 H1/H3, 标记 H2/H4/H6 待审核, 生成报告]
+    notes:
+      - "H1/H3 自动修复无需人工确认（MD 是权威源，重建索引是无损的）"
+
+# ============ 依赖拓扑 ============
+
+dependency_topology:
+  ColdStartEngine: [LLMClient, MarkdownStore, SecurityScanner]
+  PipelineService: [Batcher, Extractor, Validator, Deduplicator, Writer, Consolidator]
+  PromotionEngine: [SQLiteStore, KnowledgeItem Model]
+  PruningEngine: [SQLiteStore, MarkdownStore]
+  DataHealthEngine: [SQLiteStore, SearchEngine, MarkdownStore, SecurityScanner]

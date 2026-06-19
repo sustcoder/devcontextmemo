@@ -1,0 +1,164 @@
+# devContextMemo 领域聚合卡 V1.0 — knowledge-quality
+# 知识质量保障：校准 + 冲突检测
+# AI 修改 calibration / conflict 相关代码前必读
+
+schema_version: "1.0"
+generated_at: "2026-06-18"
+domain: knowledge-quality
+source_doc: "design/devContextMemo-系统架构设计-V1.0.md"
+
+description: |
+  知识质量保障是 devContextMemo 的差异化核心。
+  校准引擎确保知识与代码同步演化，冲突检测确保知识库内部一致性。
+  这部分的准确率直接决定注入 AI 上下文的知识是否可信。
+
+# ============ 模块列表 ============
+
+modules:
+  - name: CalibrationEngine
+    layer: management
+    file: "src/devcontextmemo/core/calibration.py"
+    trigger: ["git commit", "manual edit (author ≠ AI)", "dev dream"]
+    responsibility: "检测代码变更 → 查找关联知识 → LLM 语义对比 → 更新校准状态"
+    design_decision: D59
+    risk: high  # 误判会污染知识库
+    change_constraints:
+      - "LLM prompt 模板变更需人工 review（影响校准准确率）"
+      - "判定阈值（VALID/UNCERTAIN/CONFLICT）变更需 A/B 验证"
+      - "新增触发事件类型需同步更新 §4.1 触发事件矩阵"
+    key_functions:
+      - "trigger(event: CalibrationEvent) -> CalibrationResult"
+      - "find_related_knowledge(code_entry_id: str) -> List[KnowledgeItem]"
+      - "semantic_compare(old_content: str, new_code: str) -> ValidityJudgment"
+
+  - name: ConflictDetector
+    layer: management
+    file: "src/devcontextmemo/core/conflict.py"
+    trigger: ["写入流水线 Step 6", "calibration 判定 CONFLICT", "DataHealthEngine H2"]
+    responsibility: "五层冲突检测（L0-L5）+ 仲裁机制"
+    risk: high
+    change_constraints:
+      - "仲裁阈值（evidence_weight × confidence 差值 ≥ 0.30）变更需决策记录"
+      - "L4（代码一致性）检测逻辑变更需同步更新 CalibrationEngine"
+
+# ============ 触发事件矩阵（CalibrationEngine） ============
+
+calibration_trigger_matrix:
+  E1:
+    name: "Git commit"
+    priority: P0
+    phase: 1
+    detection: "git watcher 监听 post-commit hook，解析变更文件列表"
+    granularity: "文件级 → 类级别"
+  E2:
+    name: "新服务/模块上线"
+    priority: P0
+    phase: 1
+    detection: "新文件检测 + 目录结构变更"
+    granularity: "模块级"
+  E3:
+    name: "人肉修改（author ≠ AI）"
+    priority: P0
+    phase: 1
+    detection: "Git author 检查 + 变更量阈值（>50 行）"
+    granularity: "文件级"
+  E4:
+    name: "需求文档变更"
+    priority: P1
+    phase: 1
+    detection: ".devContextMemo/knowledge/requirement/ 下 MD 文件的 content_hash 变更"
+    granularity: "知识条目级"
+  E5:
+    name: "架构评审通过"
+    priority: P1
+    phase: 2
+    detection: "架构文档状态变更（STAGED → STABLE 跃迁）"
+    granularity: "领域级"
+  E6:
+    name: "Spec 接口变更"
+    priority: P1
+    phase: 2
+    detection: "API 定义文件 diff + OpenAPI schema 比对"
+    granularity: "接口级"
+  E7:
+    name: "依赖版本升级"
+    priority: P1
+    phase: 2
+    detection: "pyproject.toml / package.json diff + 版本号变更检测"
+    granularity: "依赖级"
+  E8:
+    name: "故障复盘结论"
+    priority: P2
+    phase: 2
+    detection: "手动触发 dev dream --scope=incident"
+    granularity: "领域级"
+
+# ============ 五层冲突检测（ConflictDetector） ============
+
+conflict_detection_layers:
+  L0:
+    name: "内容哈希精确匹配"
+    method: "SHA-256 content_hash 比对"
+    action: "精确重复 → 跳过写入"
+  L1:
+    name: "语义签名哈希"
+    method: "语义向量相似度检测"
+    action: "语义相似 → 标记待人工确认"
+  L2:
+    name: "LLM 矛盾检测"
+    method: "同领域知识一致性 LLM 判断"
+    action: "矛盾 → CONFLICT 标记"
+  L3:
+    name: "交叉扫描"
+    method: "全库一致性检查（定期执行）"
+    action: "不一致 → 生成报告"
+  L4:
+    name: "代码一致性"
+    method: "知识描述 vs 实际代码（调用 CalibrationEngine）"
+    action: "不一致 → 标记 STALE"
+  L5:
+    name: "人工校准"
+    method: "最终仲裁（dev review）"
+    action: "人工判定最终状态"
+
+arbitration_rule: |
+  当 evidence_weight × confidence 差值 ≥ 0.30 时，自动采用高置信度结果。
+  否则标记 CONFLICT + 人工审核（dev review）。
+
+# ============ 跨模块不变量 ============
+
+invariants:
+  - "CalibrationEngine 判定 UNCERTAIN 的知识，ConflictDetector 不得自动标记为 VALID"
+  - "ConflictDetector L4 检测调用的 CalibrationEngine 必须使用当前 ACTIVE 版本 content（而非最新快照）"
+  - "CalibrationEngine 的 LLM 调用失败（超时/API 错误）必须降级为 UNCERTAIN，不得标记为 CONFLICT"
+  - "同一 knowledge_id 的校准历史（calibration_history）不得被 ConflictDetector 修改"
+
+# ============ 关键流程场景 ============
+
+key_scenarios:
+  - scenario: "Git commit 触发校准（正常流程）"
+    steps:
+      - "git watcher 捕获 post-commit hook"
+      - "解析 diff，提取变更文件的类名"
+      - "查找 code_entry_id 匹配的知识条目"
+      - "LLM 语义对比（旧知识 vs 新代码）"
+      - "判定：VALID / UNCERTAIN / CONFLICT"
+      - "更新 knowledge_items 的 calibration 字段"
+    notes:
+      - "多文件关联时聚合判断"
+      - "类级别校准是辅助信号，不直接改变知识状态（D59 约束）"
+
+  - scenario: "冲突检测 + 仲裁"
+    trigger: "写入流水线 Step 6 或校准判定 CONFLICT"
+    steps:
+      - "ConflictDetector 执行 L0-L5 检测"
+      - "若仲裁规则自动可判定 → 更新知识状态"
+      - "若无法自动判定 → 标记 CONFLICT，触发 dev review"
+    notes:
+      - "L5 人工仲裁的结果是最终真理，后续校准不得推翻（除非新代码明确否定）"
+
+# ============ 依赖拓扑 ============
+
+dependency_topology:
+  CalibrationEngine: [SQLiteStore, MarkdownStore, LLMClient, KnowledgeItem Model]
+  ConflictDetector: [SQLiteStore, CalibrationEngine, LLMClient]

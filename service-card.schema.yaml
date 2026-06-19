@@ -1,0 +1,77 @@
+# Service Card Schema V1.0
+# 每个核心模块一张 Service Card，放在模块同级目录
+# CI 检查：每张 Card 必须包含 required 字段
+
+schema_version: "1.0"
+generated_at: "2026-06-18"
+source_doc: "design/devContextMemo-系统架构设计-V1.0.md §8.3"
+
+# ============ 字段定义 ============
+
+fields:
+  required:
+    - name: "module.name"
+      type: string
+      description: "模块名（对应 Python 文件名或类名）"
+    - name: "module.layer"
+      type: enum
+      values: [interaction, service, management, storage, processing, collection, infrastructure]
+      description: "所属层"
+    - name: "module.file_path"
+      type: string
+      description: "代码文件路径（相对于 src/devcontextmemo/）"
+    - name: "module.responsibilities"
+      type: "list[string]"
+      description: "3-7 条核心职责"
+    - name: "module.depends_on"
+      type: "list[string]"
+      description: "依赖的下游模块（模块名列表）"
+    - name: "module.data_owned"
+      type: "list[string]"
+      description: "本模块直接写的数据（表/文件/缓存 key）"
+
+  optional:
+    - name: "module.depended_by"
+      type: "list[string]"
+      description: "被哪些上游模块依赖"
+    - name: "module.data_readonly"
+      type: "list[string]"
+      description: "本模块只读不写的数据"
+    - name: "module.key_functions"
+      type: "list[string]"
+      description: "核心函数/方法签名"
+    - name: "module.risk_level"
+      type: enum
+      values: [low, medium, high]
+    - name: "module.test_entry"
+      type: string
+      description: "单测命令"
+    - name: "module.integration_test_entry"
+      type: string
+      description: "集成测试命令"
+    - name: "module.change_constraints"
+      type: "list[string]"
+      description: "哪些不能随便改"
+
+# ============ CI 检查规则 ============
+
+ci_checks:
+  - check: "service_card_exists"
+    description: "每个 core/ 和 services/ 下的 .py 文件必须有对应 service-card.yaml"
+    blocking: true
+  - check: "required_fields_present"
+    description: "required 字段不得为空"
+    blocking: true
+  - check: "depends_on_resolvable"
+    description: "depends_on 列出的模块名必须在 architecture.yaml 中存在"
+    blocking: true
+  - check: "layer_dependency_compliance"
+    description: "不得违反 architecture.yaml 中的 dependency_rules"
+    blocking: true
+
+# ============ 示例引用 ============
+# 完整示例见：design/devContextMemo-系统架构设计-V1.0.md §8.3（CalibrationEngine Service Card）
+# 各模块 Card 在编码阶段同步交付，放在对应模块目录：
+#   src/devcontextmemo/core/calibration.service-card.yaml
+#   src/devcontextmemo/services/injection.service-card.yaml
+#   ...

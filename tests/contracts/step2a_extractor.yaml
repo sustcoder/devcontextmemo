@@ -1,0 +1,70 @@
+contract:
+  step: step2a_extractor
+  version: "1.1"
+  description: "LLM 提炼知识 + 四轴分类 (granularity/stability/depth/domain) + 时间提取"
+
+input:
+  source: "batch-{session_id}-{timestamp}.jsonl"
+  format: |
+    {"session_id": "...", "seq": 1, "role": "user", "content": "...", "timestamp": "...", "source": "..."}
+
+preconditions:
+  - batch JSONL file exists and is non-empty
+  - LLM API is available (MiniMax or GLM)
+  - domain_tree is loaded
+  - classification enums are loaded (L0-L5 / S1-S5 / KW-KH-KY)
+
+output:
+  format: "summary_{session_id}.jsonl"
+  path: "{staging_dir}/"
+  required_fields: [session_id, knowledge_text, granularity, stability, depth, domain, confidence, occurred_at, source_messages, status]
+  status: "staged"
+
+assertions:
+  classification:
+    - each(knowledge).confidence >= 0.0 and <= 1.0
+    - each(knowledge).granularity in [L0, L1, L2, L3, L4, L5]
+    - each(knowledge).stability in [S1, S2, S3, S4, S5]
+    - each(knowledge).depth in [KW, KH, KY]
+    - each(knowledge).domain in domain_tree.keys()
+    - each(knowledge).domain is non-empty string
+  time_extraction:
+    - each(knowledge).occurred_at is valid ISO 8601 or null
+    - explicit timestamps extracted correctly from message content
+    - implicit timestamps (e.g. "上周") inferred to approximate date
+    - un-inferrable timestamps set to null (not guessed)
+  count:
+    - len(output) <= len(input)  # extraction never increases item count
+  quality:
+    - each(knowledge).knowledge_text is non-empty string
+    - each(knowledge).source_messages is non-empty list of integers
+  truncation:
+    - when token_count > 32000, conversation is truncated (recent messages kept)
+    - truncated extraction has confidence capped at 0.80
+  retry:
+    - LLM output parse failure → retry up to 3 times
+    - 3 failures → raise ValueError (dead letter at pipeline level)
+
+evidence:
+  required:
+    - llm_request_log (full prompt + response)
+    - llm_token_usage
+    - output summary file
+    - classification_confidence_distribution
+
+failure_modes:
+  BLOCK:
+    - LLM API unavailable
+    - domain_tree not loaded
+    - batch file corrupted or empty
+    - LLM API timeout (retry 3x then BLOCK)
+  FAIL:
+    - output format invalid
+    - required fields missing
+    - enum values out of range (L0-L5 / S1-S5 / KW-KH-KY)
+    - confidence outside [0, 1]
+    - domain not in domain_tree
+    - knowledge_text empty
+  PASS:
+    - all assertions pass
+    - evidence complete

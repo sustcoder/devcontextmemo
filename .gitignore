@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Coverage
+htmlcov/
+.coverage
+.devcontext/test-evidence/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# App data
+.devContextMemo/
+.claw/
+.claude/
+.codebuddy/
+
+# Secrets
+.env
+
+# GitNexus cache
+.gitnexus/
+
+# Graphify AST cache (build artifacts)
+graphify-out/cache/

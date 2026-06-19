@@ -1,0 +1,63 @@
+contract:
+  step: step5_writer
+  version: "1.1"
+  description: "原子写入 — MD 文件 + SQLite 记录同步，MD first → DB second"
+
+input:
+  source: "knowledge_{session_id}.jsonl (fully processed: hashed, deduped, validated)"
+  target_dirs:
+    staging: ".devContextMemo/staging/"
+    knowledge: ".devContextMemo/knowledge/{domain}/"
+  db_path: ".devContextMemo/devcontextmemo.db"
+
+preconditions:
+  - knowledge JSONL file exists and is non-empty
+  - target directories are writable
+  - SQLite DB is accessible (or None to skip DB)
+
+output:
+  md_files:
+    - path: ".devContextMemo/knowledge/{domain}/{title}.md" (green channel, confidence >= 0.95)
+    - path: ".devContextMemo/staging/{YYYYMMDD}-{title}.md" (normal, confidence < 0.95)
+    - format: "markdown with YAML frontmatter (15 fields)"
+  db_records:
+    - table: "knowledge_index"
+    - fields: [id, title, domain, sub_domain, granularity, stability, depth, status, confidence, code_verified, concept_tags, source_session, uri, created_at, updated_at]
+
+assertions:
+  atomicity:
+    - MD file is written and fsynced BEFORE DB record is inserted (MD first → DB second)
+    - if MD write fails → no DB insert attempted (return md_success=False)
+    - if DB insert fails → MD file is intact (md_success=True, db_success=False)
+  green_channel:
+    - confidence >= 0.95 → write_to_knowledge (domain subdir)
+    - confidence < 0.95 → write_to_staging (date prefix)
+  integrity:
+    - MD frontmatter includes all 15 managed fields
+    - DB record matches MD frontmatter (via to_db_dict mapping)
+    - status field uses V1.1 lowercase (staged/draft/etc.)
+  content:
+    - knowledge_text is non-empty
+    - domain directory is created if not exists (knowledge target)
+    - duplicate items (is_duplicate=true) are skipped
+  fts5:
+    - if SQLiteStore.fts_available → _sync_fts called after DB insert
+
+evidence:
+  required:
+    - written MD file(s)
+    - DB record(s)
+    - WriteResult list (md_success, db_success, target, status)
+
+failure_modes:
+  BLOCK:
+    - target directory not writable
+    - DB inaccessible
+    - disk full
+  FAIL:
+    - MD file missing after successful write
+    - DB record missing after successful write
+    - path traversal detected (handled by MarkdownStore)
+  PASS:
+    - all assertions pass
+    - evidence complete

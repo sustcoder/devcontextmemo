@@ -1,0 +1,89 @@
+# devContextMemo Architecture Map V1.0
+# 机器可读的全局架构地图，供 AI Agent 装载上下文
+# 参与 CI 检查：架构依赖方向、数据所有权、分层规则
+
+schema_version: "1.0"
+generated_at: "2026-06-18"
+source_doc: "design/devContextMemo-系统架构设计-V1.0.md §8.2"
+
+system:
+  name: devContextMemo
+  chinese_name: 码上记忆
+  phase: 1  # 单机版
+  tech_stack:
+    language: "Python 3.13"
+    web_framework: FastAPI
+    mcp_framework: FastMCP
+    database: "SQLite (WAL mode)"
+    search: FTS5
+    llm: ["MiniMax", "GLM"]
+
+business_domains:
+  - name: knowledge_management
+    description: 知识生命周期管理（采集→提炼→验证→去重→写入→巩固）
+    core_services: [pipeline, calibration, promotion, pruning, health]
+  - name: knowledge_retrieval
+    description: 知识检索与注入（MCP Tool + AGENTS.md）
+    core_services: [injection, search]
+  - name: source_collection
+    description: 原始素材采集（OpenCode 日志 + Git Diff）
+    core_services: [collector, git_watcher]
+
+service_layering:
+  - layer: interaction
+    responsibilities: ["MCP Tool 暴露", "REST API", "CLI 命令"]
+  - layer: service
+    responsibilities: ["知识检索编排", "流水线编排", "审核流程", "主动扫描", "知识注入"]
+  - layer: management
+    responsibilities: ["晋升评估", "修剪规则", "冲突检测", "校准引擎", "冷启动", "数据健康"]
+  - layer: storage
+    responsibilities: ["MD 文件操作", "SQLite 索引", "FTS5 搜索", "原子写入"]
+  - layer: processing
+    responsibilities: ["积批", "提炼", "验证", "去重", "签名", "语义分析"]
+  - layer: collection
+    responsibilities: ["OpenCode 日志采集", "Git Diff 监听", "会话归档"]
+  - layer: infrastructure
+    responsibilities: ["配置管理", "LLM API", "日志", "监控", "进程管理", "安全扫描"]
+
+core_chains:
+  - name: write_pipeline
+    description: 对话日志 → 结构化知识 → 持久化 → 晋升
+    steps: [collector, batcher, extractor, validator, deduplicator, writer, consolidator]
+    is_sync: false  # 攒批触发，非实时
+  - name: calibration_loop
+    description: Git Diff 触发 → 查找关联知识 → LLM 语义对比 → 更新状态
+    trigger: ["git_commit", "manual_edit"]
+    is_sync: false  # 异步被动触发
+  - name: injection_chain
+    description: AI 请求知识 → FTS5 搜索 → 语义重排 → 返回
+    trigger: ["mcp_tool_call"]
+    is_sync: true
+
+data_ownership:
+  markdown_files:
+    owner: "storage layer (markdown.py)"
+    path: ".devContextMemo/knowledge/"
+    access: read_write
+  sqlite_index:
+    owner: "storage layer (sqlite.py)"
+    path: ".devContextMemo/devcontextmemo.db"
+    access: read_write  # via ORM only
+  fts5_index:
+    owner: "storage layer (search.py)"
+    access: read_write  # derived from MD, rebuildable
+  staging_area:
+    owner: "pipeline service"
+    path: ".devContextMemo/staging/"
+    access: read_write  # DRAFT entries only
+
+dependency_rules:
+  - rule: "上层可依赖下层，下层不可依赖上层"
+  - rule: "management 层可调用 storage 层，不可调用 service 层"
+  - rule: "processing 层通过 service 层协调，不可直接调用 storage 层"
+  - rule: "infrastructure 层被所有层依赖，不依赖任何业务层"
+
+legacy_modules: []  # Phase 1 无遗留模块
+
+future_direction:
+  phase_2: "多项目支持 + Web UI + 权限分级"
+  phase_3: "多 Agent 协作 + 云端同步"

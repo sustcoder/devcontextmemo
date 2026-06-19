@@ -1,0 +1,65 @@
+contract:
+  step: step0_receiver
+  version: "1.1"
+  description: "统一接收层 — 适配器标准化各数据源 → 统一 JSONL 格式原始会话存储"
+
+input:
+  source: "data source adapter output"
+  adapters:
+    opencode:
+      type: sqlite
+      path: "~/.codebuddy/projects/{project}/codebuddy.db"
+      tables: [session, message, part]
+    comate:
+      type: json_export
+      path: "{user_provided_path}"
+    cursor:
+      type: "tbd (not yet implemented)"
+
+preconditions:
+  - adapter config is valid
+  - data source is accessible
+  - raw_dir directory exists (or can be created)
+
+output:
+  format: session_{session_id}.jsonl
+  path: "{raw_dir}/"
+  required_fields: [session_id, seq, role, content, timestamp, source]
+  optional_fields: [tools, reasoning, metadata]
+
+assertions:
+  format:
+    - output is valid JSONL (one JSON object per line)
+    - each line has all required_fields
+    - session_id is non-empty string
+    - seq is positive integer, monotonically increasing within session
+    - role in [user, assistant, system, tool]
+    - content is non-empty string (after noise stripping)
+    - timestamp is valid ISO 8601
+    - source in [opencode, comate, cursor, manual]
+  consistency:
+    - all lines in one file share the same session_id
+    - seq values are consecutive (no gaps)
+  noise_stripping:
+    - "<system-reminder>...</system-reminder>" blocks removed
+    - "<relevant-memories>...</relevant-memories>" blocks removed
+    - "<openviking-context>...</openviking-context>" blocks removed
+    - "[Subagent Context]...[/Subagent Context]" blocks removed
+
+evidence:
+  required:
+    - output session file(s)
+    - adapter execution log
+    - source metadata (data source type, connection info)
+
+failure_modes:
+  BLOCK:
+    - data source not accessible
+    - adapter config invalid
+    - output directory not writable
+  FAIL:
+    - output format invalid
+    - required fields missing
+    - session_id duplication within file
+    - invalid role value
+    - seq not positive integer

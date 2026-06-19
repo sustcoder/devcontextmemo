@@ -1,0 +1,50 @@
+contract:
+  step: step3_validator
+  version: "1.1"
+  description: "验证 — content_hash + semantic_hash 计算 + code_verified 设置"
+
+input:
+  source: "knowledge_{session_id}.jsonl"
+  format: |
+    {"session_id": "...", "knowledge_text": "...", "granularity": "L2", ..., "entities": [...], "relations": [...]}
+
+preconditions:
+  - knowledge JSONL file exists and is non-empty
+  - hash algorithm is available (SHA-256 + SimHash)
+
+output:
+  format: "knowledge_{session_id}.jsonl (updated in place)"
+  added_fields: [content_hash, semantic_hash, code_verified]
+  content_hash: "SHA-256 of normalized knowledge_text (64-char hex)"
+  semantic_hash: "SimHash of normalized knowledge_text (16-char hex, 64-bit)"
+  code_verified: "int (0/1) — 1 if entities include at least one file reference"
+
+assertions:
+  hash:
+    - each(knowledge).content_hash is 64-char hex string
+    - each(knowledge).semantic_hash is 16-char hex string
+    - identical knowledge_text produces identical content_hash
+    - whitespace differences do not affect content_hash (normalized)
+    - different texts produce different content_hash
+  code_verified:
+    - code_verified = 1 when entities contain at least one entry with "file" field
+    - code_verified = 0 when entities is empty or all entries lack "file" field
+  integrity:
+    - all input fields are preserved in output
+    - no knowledge items are dropped
+    - content_hash/semantic_hash not stored in DB (JSONL intermediate only)
+
+evidence:
+  required:
+    - output knowledge file (with hash fields)
+    - hash computation log
+
+failure_modes:
+  BLOCK:
+    - knowledge file corrupted
+    - hash algorithm unavailable
+  FAIL:
+    - content_hash length != 64
+    - semantic_hash length != 16
+    - code_verified not 0 or 1
+    - input fields lost

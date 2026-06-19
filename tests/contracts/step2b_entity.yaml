@@ -1,0 +1,65 @@
+contract:
+  step: step2b_entity
+  version: "1.1"
+  description: "LLM 从结构化摘要中提取实体 + 关系"
+
+input:
+  source: "summary_{session_id}.jsonl"
+  format: |
+    {"session_id": "...", "knowledge_text": "...", "granularity": "L2", "stability": "S3", "depth": "KH", "domain": "order", "confidence": 0.88, "occurred_at": "...", "source_messages": [...], "status": "staged"}
+
+preconditions:
+  - summary JSONL file exists and is non-empty
+  - LLM API is available
+  - entity type taxonomy is loaded
+  - relation type taxonomy is loaded
+
+output:
+  format: "knowledge_{session_id}.jsonl"
+  path: "{staging_dir}/"
+  required_fields: [session_id, knowledge_text, granularity, stability, depth, domain, confidence, occurred_at, source_messages, status, entities, relations]
+  status: "staged"
+
+assertions:
+  entity:
+    - each(knowledge).entities is a list (can be empty)
+    - each(entity).name is non-empty string
+    - each(entity).type in [class, interface, method, function, module, file, config_file, pattern, concept, tool, service, database, api, other]
+    - each(entity).file (if present) is valid relative path
+    - entity names are normalized (no duplicate names in same knowledge item)
+  relation:
+    - each(knowledge).relations is a list (can be empty)
+    - each(relation).source in [entity.name for entity in entities]
+    - each(relation).target is non-empty string
+    - each(relation).type in [extends, implements, uses, depends_on, handles, configures, belongs_to, triggers, calls, references]
+  integrity:
+    - each input knowledge_text produces exactly one output item
+    - granularity/stability/depth/domain/confidence/occurred_at/source_messages are preserved from input
+  graceful_degradation:
+    - LLM output parse failure after 3 retries → empty entities/relations (not crash)
+  retry:
+    - LLM output parse failure → retry up to 3 times
+    - 3 failures → degrade to empty entities/relations (pipeline continues)
+
+evidence:
+  required:
+    - llm_request_log
+    - llm_token_usage
+    - output knowledge file
+    - entity_count_distribution
+
+failure_modes:
+  BLOCK:
+    - LLM API unavailable
+    - summary file corrupted or empty
+    - LLM API timeout (retry 3x then degrade)
+  FAIL:
+    - output format invalid
+    - entity name empty
+    - entity type out of range
+    - relation source not in entities
+    - relation type out of range
+    - input fields not preserved
+  PASS:
+    - all assertions pass
+    - evidence complete
