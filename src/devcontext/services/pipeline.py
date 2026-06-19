@@ -94,13 +94,24 @@ class PipelineService:
         logger.info("processing batch: %s", batch_path)
 
         # 解析 messages.jsonl 文件路径
-        current_path: Path = batch_path
-        if current_path.is_dir():
-            messages_file = current_path / "messages.jsonl"
-            if not messages_file.exists():
-                candidates = sorted(current_path.glob("batch_*.jsonl"))
-                messages_file = candidates[0] if candidates else current_path
-            current_path = messages_file
+        try:
+            current_path: Path = batch_path
+            if current_path.is_dir():
+                messages_file = current_path / "messages.jsonl"
+                if not messages_file.exists():
+                    candidates = sorted(current_path.glob("batch_*.jsonl"))
+                    if not candidates:
+                        raise FileNotFoundError(
+                            f"No messages.jsonl or batch_*.jsonl in {batch_path}"
+                        )
+                    messages_file = candidates[0]
+                current_path = messages_file
+        except Exception:
+            logger.error(
+                "failed to resolve batch files: %s", batch_path, exc_info=True
+            )
+            self._update_batch_status(batch_path, "failed")
+            return
 
         # Step 2a: 提炼
         if self.extractor:
