@@ -118,6 +118,10 @@ class Extractor:
             if record is not None:
                 summary_records.append(record)
 
+        if not summary_records:
+            logger.warning("LLM returned 0 extracted items for session %s", session_id)
+            raise ValueError(f"No knowledge extracted from session {session_id}")
+
         # 写 summary JSONL
         self.staging_dir.mkdir(parents=True, exist_ok=True)
         output_path = self.staging_dir / f"summary_{session_id}.jsonl"

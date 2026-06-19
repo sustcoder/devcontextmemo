@@ -116,11 +116,7 @@ class EntityExtractor:
 
         summaries = self._read_jsonl(summary_path)
         if not summaries:
-            # 空 summary → 空 knowledge
-            self.staging_dir.mkdir(parents=True, exist_ok=True)
-            output_path = self.staging_dir / summary_path.name.replace("summary_", "knowledge_")
-            self._write_jsonl(output_path, [])
-            return output_path
+            raise ValueError(f"Summary file is empty: {summary_path}")
 
         session_id = summaries[0].get("session_id", "unknown")
         knowledge_records: list[dict[str, Any]] = []
