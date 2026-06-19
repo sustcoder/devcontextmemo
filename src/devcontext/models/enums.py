@@ -124,7 +124,7 @@ VALID_DEPTHS: frozenset[str] = frozenset(d.value for d in Depth)
 # - 任意状态 →deprecated 合法（手动废弃）
 # - deprecated 仅可 →staged（T20 人工恢复）
 ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
-    "staged": frozenset({"staged", "candidate", "pending_review", "draft", "deprecated"}),
+    "staged": frozenset({"staged", "candidate", "pending_review", "draft", "active", "deprecated"}),
     "candidate": frozenset({"candidate", "active", "pending_review", "deprecated"}),
     "pending_review": frozenset({"pending_review", "active", "deprecated"}),
     "draft": frozenset({"draft", "active", "deprecated"}),

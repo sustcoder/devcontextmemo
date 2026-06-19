@@ -52,6 +52,7 @@ _VALID_ENTITY_TYPES = frozenset(
         "service",
         "database",
         "api",
+        "library",
         "other",
     }
 )

@@ -151,7 +151,7 @@ class Writer:
             "granularity": record.get("granularity", "L2"),
             "stability": record.get("stability", "S3"),
             "depth": record.get("depth", "KH"),
-            "status": record.get("status", "staged"),
+            "status": record.get("status", "candidate"),
             "confidence": confidence,
             "code_verified": record.get("code_verified", 0),
             "concept_tags": self._extract_concept_tags(record),

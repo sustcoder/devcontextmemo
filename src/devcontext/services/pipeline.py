@@ -185,7 +185,7 @@ class PipelineService:
                 report = self.consolidator.process()
                 logger.info(
                     "  [Step 6] done: promoted=%d pruned=%d",
-                    report.promoted_count,
+                    report.promotions,
                     report.pruned_count,
                 )
             except Exception:
