@@ -139,6 +139,14 @@ def capture_command(
 @app.command("serve")
 def serve_command():
     """启动后台 daemon：自动轮询采集 + 全链路流水线处理。"""
+    import logging
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
     from devcontext.main import serve
 
     typer.echo("Starting devContextMemo daemon...")
