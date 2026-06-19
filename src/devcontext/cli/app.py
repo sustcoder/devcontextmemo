@@ -136,5 +136,17 @@ def capture_command(
         typer.echo("Capture complete.")
 
 
+@app.command("serve")
+def serve_command():
+    """启动后台 daemon：自动轮询采集 + 全链路流水线处理。"""
+    from devcontext.main import serve
+
+    typer.echo("Starting devContextMemo daemon...")
+    typer.echo(f"  OpenCode DB: ~/.local/share/opencode/opencode.db")
+    typer.echo(f"  Staging dir: .devContextMemo/staging/")
+    typer.echo("Press Ctrl+C to stop.")
+    serve()
+
+
 if __name__ == "__main__":
     app()

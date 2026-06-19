@@ -5,6 +5,7 @@
 
 import asyncio
 import logging
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -12,37 +13,42 @@ logger = logging.getLogger(__name__)
 def serve():
     """启动 devContextMemo daemon。
 
-    创建采集器 + 攒批器 + 流水线编排，并发运行采集和后续处理。
+    创建采集器 + 攒批器 + Steps 2-6 + 流水线编排，并发运行采集和处理。
     """
-    from pathlib import Path
-
     from devcontext.config import settings
     from devcontext.core.adapters.filesystem import FileSystemAdapter
     from devcontext.core.adapters.opencode_sqlite import OpenCodeSQLiteAdapter
     from devcontext.core.collectors.polling import PollingCollector
     from devcontext.core.pipeline.batcher import BatchWriter
+    from devcontext.core.pipeline.consolidator import Consolidator
+    from devcontext.core.pipeline.deduplicator import Deduplicator
+    from devcontext.core.pipeline.entity_extractor import EntityExtractor
+    from devcontext.core.pipeline.extractor import Extractor
+    from devcontext.core.pipeline.validator import Validator
+    from devcontext.core.pipeline.writer import Writer
     from devcontext.services.pipeline import PipelineService
+    from devcontext.storage.markdown import MarkdownStore
+    from devcontext.storage.sqlite import SQLiteStore
+    from devcontext.utils.llm import create_llm_client
 
     collectors = []
 
     # OpenCode SQLite 适配器
-    opencode_db = Path("~/.config/opencode/opencode.db").expanduser()
+    opencode_db = Path(settings.opencode_db_path).expanduser()
     if opencode_db.exists():
         collectors.append(
             PollingCollector(
-                adapter=OpenCodeSQLiteAdapter(
-                    db_path=str(opencode_db),
-                ),
+                adapter=OpenCodeSQLiteAdapter(db_path=str(opencode_db)),
             )
         )
 
-    # 文件系统适配器 — 扫描 raw 目录
-    raw_dir = Path(settings.raw_dir).expanduser()
-    if raw_dir.exists():
+    # 文件系统适配器
+    if settings.filesystem_scan_paths:
         collectors.append(
             PollingCollector(
                 adapter=FileSystemAdapter(
-                    scan_paths=[str(raw_dir)],
+                    scan_paths=settings.filesystem_scan_paths,
+                    file_patterns=settings.filesystem_file_patterns,
                 ),
             )
         )
@@ -51,18 +57,57 @@ def serve():
         logger.warning("no data sources configured, daemon will idle")
         return
 
-    batch_writer = BatchWriter(
-        staging_dir=settings.staging_dir,
-    )
+    batch_writer = BatchWriter(staging_dir=settings.staging_dir)
+
+    # Steps 2-6: 仅在 LLM 配置就绪时启用
+    extractor = None
+    entity_extractor = None
+    validator = None
+    deduplicator = None
+    writer = None
+    consolidator = None
+
+    if settings.llm_api_key and settings.llm_base_url:
+        llm_client = create_llm_client()
+        domain_tree = {}  # 可从配置或数据库中加载
+
+        staging = Path(settings.staging_dir)
+        knowledge = Path(settings.knowledge_dir)
+        deprecated = Path(settings.deprecated_dir)
+
+        markdown_store = MarkdownStore(
+            str(staging), str(knowledge), str(deprecated)
+        )
+        db_store = SQLiteStore(settings.db_path)
+        db_store.init_db()
+
+        extractor = Extractor(llm_client, domain_tree, str(staging))
+        entity_extractor = EntityExtractor(llm_client, str(staging))
+        validator = Validator(str(staging))
+        deduplicator = Deduplicator(str(staging), existing_records=[])
+        writer = Writer(markdown_store, db_store)
+        consolidator = Consolidator(db_store, markdown_store)
+
+        logger.info("Steps 2-6 enabled (LLM configured)")
+    else:
+        logger.warning(
+            "Steps 2-6 disabled: set DEVCONTEXT_LLM_API_KEY + "
+            "DEVCONTEXT_LLM_BASE_URL to enable knowledge extraction"
+        )
 
     pipeline = PipelineService(
         collectors=collectors,
         batch_writer=batch_writer,
+        extractor=extractor,
+        entity_extractor=entity_extractor,
+        validator=validator,
+        deduplicator=deduplicator,
+        writer=writer,
+        consolidator=consolidator,
     )
 
     async def _run():
         await pipeline.start()
-        # Keep running until interrupted
         while True:
             await asyncio.sleep(1)
 
