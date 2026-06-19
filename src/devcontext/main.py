@@ -75,7 +75,7 @@ def serve():
 
     if settings.llm_api_key and settings.llm_base_url:
         llm_client = create_llm_client()
-        domain_tree = {}  # 可从配置或数据库中加载
+        domain_tree = _load_domain_tree()
 
         staging = Path(settings.staging_dir)
         knowledge = Path(settings.knowledge_dir)
@@ -137,3 +137,33 @@ def serve():
 
 if __name__ == "__main__":
     serve()
+
+
+def _load_domain_tree() -> dict:
+    """加载领域树配置。
+
+    读取 .devContextMemo/domain-tree.yaml，
+    文件不存在或解析失败时返回空 dict（自动模式）。
+
+    Returns:
+        领域树 dict。
+    """
+    import yaml
+
+    tree_path = Path(".devContextMemo/domain-tree.yaml")
+    if not tree_path.exists():
+        logger.info("no domain-tree.yaml found, using auto-detect mode")
+        return {}
+
+    try:
+        tree = yaml.safe_load(tree_path.read_text(encoding="utf-8"))
+        if isinstance(tree, dict):
+            logger.info(
+                "loaded domain-tree.yaml: %d domains", len(tree)
+            )
+            return tree
+    except Exception:
+        logger.warning("failed to load domain-tree.yaml, using auto-detect mode",
+                       exc_info=True)
+
+    return {}
