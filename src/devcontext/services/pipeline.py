@@ -116,11 +116,12 @@ class PipelineService:
         # Step 2a: 提炼
         if self.extractor:
             try:
+                logger.info("  [Step 2a] extracting knowledge...")
                 current_path = self.extractor.process(current_path)
-                logger.info("extraction done: %s", current_path)
+                logger.info("  [Step 2a] done: %s", current_path)
             except Exception:
                 logger.error(
-                    "extraction failed for batch: %s", batch_path, exc_info=True
+                    "  [Step 2a] extraction failed", exc_info=True
                 )
                 self._update_batch_status(batch_path, "failed")
                 return
@@ -128,11 +129,12 @@ class PipelineService:
         # Step 2b: 实体提取
         if self.entity_extractor:
             try:
+                logger.info("  [Step 2b] extracting entities...")
                 current_path = self.entity_extractor.process(current_path)
-                logger.info("entity extraction done: %s", current_path)
+                logger.info("  [Step 2b] done: %s", current_path)
             except Exception:
                 logger.error(
-                    "entity extraction failed for batch: %s", batch_path, exc_info=True
+                    "  [Step 2b] entity extraction failed", exc_info=True
                 )
                 self._update_batch_status(batch_path, "failed")
                 return
@@ -140,11 +142,12 @@ class PipelineService:
         # Step 3: 验证
         if self.validator:
             try:
+                logger.info("  [Step 3] validating...")
                 current_path = self.validator.process(current_path)
-                logger.info("validation done: %s", current_path)
+                logger.info("  [Step 3] done")
             except Exception:
                 logger.error(
-                    "validation failed for batch: %s", batch_path, exc_info=True
+                    "  [Step 3] validation failed", exc_info=True
                 )
                 self._update_batch_status(batch_path, "failed")
                 return
@@ -152,11 +155,12 @@ class PipelineService:
         # Step 4: 去重
         if self.deduplicator:
             try:
+                logger.info("  [Step 4] deduplicating...")
                 current_path = self.deduplicator.process(current_path)
-                logger.info("dedup done: %s", current_path)
+                logger.info("  [Step 4] done")
             except Exception:
                 logger.error(
-                    "dedup failed for batch: %s", batch_path, exc_info=True
+                    "  [Step 4] dedup failed", exc_info=True
                 )
                 self._update_batch_status(batch_path, "failed")
                 return
@@ -164,11 +168,12 @@ class PipelineService:
         # Step 5: 写入
         if self.writer:
             try:
+                logger.info("  [Step 5] writing to knowledge...")
                 results = self.writer.process(current_path)
-                logger.info("write done: %d items", len(results))
+                logger.info("  [Step 5] done: %d items written", len(results))
             except Exception:
                 logger.error(
-                    "write failed for batch: %s", batch_path, exc_info=True
+                    "  [Step 5] write failed", exc_info=True
                 )
                 self._update_batch_status(batch_path, "failed")
                 return
@@ -176,15 +181,16 @@ class PipelineService:
         # Step 6: 巩固
         if self.consolidator:
             try:
+                logger.info("  [Step 6] consolidating...")
                 report = self.consolidator.process()
                 logger.info(
-                    "consolidation done: promoted=%d pruned=%d",
+                    "  [Step 6] done: promoted=%d pruned=%d",
                     report.promoted_count,
                     report.pruned_count,
                 )
             except Exception:
                 logger.error(
-                    "consolidation failed", exc_info=True
+                    "  [Step 6] consolidation failed", exc_info=True
                 )
                 self._update_batch_status(batch_path, "failed")
                 return
@@ -242,21 +248,30 @@ class PipelineService:
         if not staging.exists():
             return
 
+        ready_batches: list[Path] = []
         for meta_file in sorted(staging.rglob("_meta.yaml")):
             try:
                 meta = yaml.safe_load(meta_file.read_text(encoding="utf-8"))
             except Exception:
                 continue
-            if meta.get("status") != "ready":
-                continue
+            if meta.get("status") == "ready":
+                ready_batches.append(meta_file.parent)
 
-            batch_dir = meta_file.parent
-            logger.info("processing existing batch: %s", batch_dir)
+        if not ready_batches:
+            return
+
+        total = len(ready_batches)
+        for i, batch_dir in enumerate(ready_batches, 1):
+            logger.info("[%d/%d] processing batch: %s", i, total, batch_dir.name)
             try:
                 self._on_batch_ready(batch_dir)
+                logger.info("[%d/%d] done: %s", i, total, batch_dir.name)
             except Exception:
-                # 处理失败不改 meta 状态，交给 _on_batch_ready 内部标记
-                pass
+                logger.error(
+                    "[%d/%d] failed: %s", i, total, batch_dir.name, exc_info=True
+                )
+
+        logger.info("backlog complete: %d batches processed", total)
 
     async def stop(self):
         """停止编排服务。"""
