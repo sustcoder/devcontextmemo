@@ -306,29 +306,35 @@ class TestFullPipelineIntegration:
 
         adapter = OpenCodeSQLiteAdapter(mock_opencode_db)
         watermark_file = tmp_path / "test_watermarks_3.json"
-        collector = _make_collector(adapter, watermark_file)
 
-        # Mock Steps 2-6
-        mock_extractor = MagicMock()
-        mock_extractor.process.return_value = Path("/fake/summary.jsonl")
+        # 全程 patch WATERMARK_FILE 避免写入真实文件
+        with patch(
+            "devcontext.core.collectors.polling.DEFAULT_WATERMARK_FILE",
+            watermark_file,
+        ):
+            collector = _make_collector(adapter, watermark_file)
 
-        batch_writer = BatchWriter(str(staging), token_threshold=100)
+            # Mock Steps 2-6
+            mock_extractor = MagicMock()
+            mock_extractor.process.return_value = Path("/fake/summary.jsonl")
 
-        pipeline = PipelineService(
-            collectors=[collector],
-            batch_writer=batch_writer,
-            extractor=mock_extractor,
-        )
+            batch_writer = BatchWriter(str(staging), token_threshold=100)
 
-        # 手动采集 + 落盘
-        result = pipeline.capture(dry_run=False)
-        assert result["collectors"]["opencode"]["messages_found"] == 4
-        assert "batch_path" in result["collectors"]["opencode"]
+            pipeline = PipelineService(
+                collectors=[collector],
+                batch_writer=batch_writer,
+                extractor=mock_extractor,
+            )
 
-        # 验证 staging 落盘
-        batch_dir = Path(result["collectors"]["opencode"]["batch_path"])
-        assert (batch_dir / "messages.jsonl").exists()
-        assert (batch_dir / "_meta.yaml").exists()
+            # 手动采集 + 落盘
+            result = pipeline.capture(dry_run=False)
+            assert result["collectors"]["opencode"]["messages_found"] == 4
+            assert "batch_path" in result["collectors"]["opencode"]
+
+            # 验证 staging 落盘
+            batch_dir = Path(result["collectors"]["opencode"]["batch_path"])
+            assert (batch_dir / "messages.jsonl").exists()
+            assert (batch_dir / "_meta.yaml").exists()
 
 
 # =============================================================================
