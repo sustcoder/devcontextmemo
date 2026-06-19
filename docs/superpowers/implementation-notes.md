@@ -49,3 +49,46 @@ for meta_file in sorted(staging.rglob("_meta.yaml")):  # 遍历所有 _meta.yaml
 | 内存 | 零 IO | 重启丢失，无法恢复 |
 
 **设计意图:** `_meta.yaml` 是 Step 1 (BatchWriter) 的输出产物，也是 Steps 2-6 的输入契约。`status` 字段让这个文件既是数据容器，又是状态机——ready → done/failed。任何进程只要读到这个文件，就能知道 batch 的当前状态，无需查询其他系统。
+
+---
+
+## #2: 领域树（domain_tree）的加载与自动模式
+
+**日期:** 2026-06-19
+**关联:** `Extractor` 知识分类 + `is_valid_domain`
+
+**问题:** LLM 提炼知识时需要把知识归入某个领域（如 `order`、`database`），但 `serve()` 中 `domain_tree = {}` 导致 LLM 返回任何领域都被 `is_valid_domain` 拦截报错：
+```
+ValueError: Item 0 invalid domain: 'general' (not in domain_tree)
+```
+
+**设计:**
+
+| domain_tree 状态 | 行为 | 适用场景 |
+|:-:|------|------|
+| 空 `{}` | 自动模式：LLM 自由命名，`is_valid_domain` 放行 | 冷启动、未配置 |
+| 有值 | 校验模式：LLM 只能选列表中的领域 | 项目有了明确的领域划分 |
+
+**存储位置选择:**
+
+| 方案 | 优缺点 |
+|------|--------|
+| `.env` | 已有 pydantic-settings / 但 JSON 一行难读、env 通常放密钥不放业务配置 |
+| `AGENTS.md` | 已存在于项目 / 但 Markdown 解析脆弱、混用目的（AI 上下文 vs 程序配置） |
+| **`.devContextMemo/domain-tree.yaml`（选用）** | YAML 结构化人机可读 / 需新增加载逻辑（~20行） |
+
+选 YAML 文件的原因：领域树是**项目级配置**（该项目的业务领域固定），不是环境级（dev/staging 都一样），且 `.devContextMemo/` 目录已存在无需新建。
+
+**加载流程** (`main.py:_load_domain_tree`):
+
+```
+serve() 启动
+  → _load_domain_tree()
+      → domain-tree.yaml 存在？
+          ├─ 是 → yaml.safe_load() → 返回 dict
+          └─ 否 → 返回 {}
+  → Extractor(llm_client, domain_tree, staging_dir)
+      → is_valid_domain(domain, tree)
+          ├─ tree 为空 → return True（自动模式）
+          └─ tree 有值 → return domain in tree（校验模式）
+```
