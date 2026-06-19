@@ -92,7 +92,15 @@ class PipelineService:
         logger.info("processing batch: %s", batch_path)
 
         try:
-            current_path = batch_path
+            # batch_path 是目录，解析到 messages.jsonl 文件
+            current_path: Path = batch_path
+            if current_path.is_dir():
+                messages_file = current_path / "messages.jsonl"
+                if not messages_file.exists():
+                    # 兼容旧 Batcher 命名
+                    candidates = sorted(current_path.glob("batch_*.jsonl"))
+                    messages_file = candidates[0] if candidates else current_path
+                current_path = messages_file
 
             if self.extractor:
                 current_path = self.extractor.process(current_path)
