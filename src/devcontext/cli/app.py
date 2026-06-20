@@ -1,4 +1,4 @@
-"""CLI 应用入口 — Typer 实例 + 5 个命令注册。
+"""CLI 应用入口 — Typer 实例 + 7 组命令注册。
 
 命令：
     dev init: 冷启动（创建 .devContextMemo/ + 初始化 DB）
@@ -6,6 +6,8 @@
     dev dream: 主动扫描（巩固 + 校准）
     dev status: 知识库状态查看
     dev config: 配置管理（get/set）
+    dev resource: 资源管理（add/list/show/search/remove/links）
+    dev staging: Staging 批次管理（status/retry-failed）
 """
 
 from __future__ import annotations
@@ -15,7 +17,9 @@ import typer
 from devcontext.cli.config import config_get, config_set
 from devcontext.cli.dream import dream_command
 from devcontext.cli.init import init_command
+from devcontext.cli.resource import resource_app
 from devcontext.cli.review import review_approve, review_list, review_reject, review_restore
+from devcontext.cli.staging_cli import staging_app
 from devcontext.cli.status import status_command
 
 app = typer.Typer(name="devcontext", help="码上记忆（devContextMemo）CLI 工具")
@@ -48,6 +52,12 @@ review_app.command(name="approve")(review_approve)
 review_app.command(name="reject")(review_reject)
 review_app.command(name="restore")(review_restore)
 app.add_typer(review_app, name="review", no_args_is_help=True)
+
+# === dev resource ===
+app.add_typer(resource_app, name="resource", no_args_is_help=True)
+
+# === dev staging ===
+app.add_typer(staging_app, name="staging", no_args_is_help=True)
 
 
 # === dev dream ===

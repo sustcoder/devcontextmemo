@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     deprecated_dir: str = ".devContextMemo/deprecated"
     quarantined_dir: str = ".devContextMemo/quarantined"
     raw_dir: str = "~/.devcontext/raw"
+    resources_dir: str = ".devContextMemo/resources"
 
     # V1.7 冲突仲裁阈值（可配置，V9 修补）
     arbitration_auto_adopt_threshold: float = 0.30
