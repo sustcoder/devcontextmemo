@@ -73,6 +73,11 @@ class KnowledgeIndex(SQLModel, table=True):
 
     # V2.0 晋升与修剪所需字段
     code_verified: int = Field(default=0, nullable=False)
+
+    # Phase 1 双轨制：知识类型 + 决策详情
+    knowledge_type: str | None = Field(default=None)
+    decision_detail: str | None = Field(default=None)  # JSON: {context, options, rationale, consequence}
+
     prune_priority: float = Field(default=0.0, nullable=False)
     concept_tags: str | None = Field(default=None)
     certainty: float = Field(default=0.5, nullable=False)

@@ -113,6 +113,87 @@ VALID_DEPTHS: frozenset[str] = frozenset(d.value for d in Depth)
 
 
 # =============================================================================
+# Phase 1 双轨制：知识类型 + 资源/链接枚举
+# =============================================================================
+
+
+class KnowledgeType(str, Enum):
+    """知识类型分类（对齐 Phase 1 双轨制）。
+
+    Attributes:
+        FACT: 事实描述（"端口是8080"）。
+        DECISION: 显式选型/决策（"选了Redis而非Memcached"）。
+        PREFERENCE: 用户/团队的偏好或习惯。
+        EXPERIENCE: 引用过去项目经验。
+    """
+
+    FACT = "fact"
+    DECISION = "decision"
+    PREFERENCE = "preference"
+    EXPERIENCE = "experience"
+
+
+VALID_KNOWLEDGE_TYPES: frozenset[str] = frozenset(t.value for t in KnowledgeType)
+
+
+class ResourceType(str, Enum):
+    """资源类型枚举。
+
+    Attributes:
+        REQUIREMENTS: 需求文档（PRD、用户故事、业务目标）。
+        SPECS: Spec 文档（API Doc、DB Schema、架构图）。
+        DESIGN: 设计文档（系统设计、详细设计）。
+        API: API 文档（接口定义、OpenAPI）。
+        SCHEMA: 数据库 Schema（SQL、Prisma）。
+    """
+
+    REQUIREMENTS = "requirements"
+    SPECS = "specs"
+    DESIGN = "design"
+    API = "api"
+    SCHEMA = "schema"
+
+
+VALID_RESOURCE_TYPES: frozenset[str] = frozenset(t.value for t in ResourceType)
+
+
+class ResourceLinkType(str, Enum):
+    """资源↔知识链接类型枚举。
+
+    Attributes:
+        DERIVED_FROM: 知识从资源提炼而来（spec 提炼成知识）。
+        REFERENCES: 知识引用了资源内容（决策理由里提到 spec 章节）。
+        CONTRADICTS: 知识与资源冲突（spec 说用 MySQL，代码用 PG）。
+        UPDATES: 知识是对旧资源版本的更新。
+    """
+
+    DERIVED_FROM = "derived_from"
+    REFERENCES = "references"
+    CONTRADICTS = "contradicts"
+    UPDATES = "updates"
+
+
+VALID_RESOURCE_LINK_TYPES: frozenset[str] = frozenset(t.value for t in ResourceLinkType)
+
+
+class KnowledgeRelation(str, Enum):
+    """知识↔知识关系类型枚举。
+
+    Attributes:
+        MERGED_FROM: 两个原始条目互补，被合并为一条。
+        SUPERSEDED_BY: 一条是另一条的精确化升级。
+        CONTRADICTS: 两条知识互相矛盾。
+    """
+
+    MERGED_FROM = "merged_from"
+    SUPERSEDED_BY = "superseded_by"
+    CONTRADICTS = "contradicts"
+
+
+VALID_KNOWLEDGE_RELATIONS: frozenset[str] = frozenset(r.value for r in KnowledgeRelation)
+
+
+# =============================================================================
 # V2.0 T1-T25 跃迁迁移矩阵
 # =============================================================================
 
@@ -238,3 +319,15 @@ def is_valid_domain(domain: str, domain_tree: dict[str, Any]) -> bool:
     if not domain_tree:  # 空树 = 自动模式，允许所有 domain
         return bool(domain)
     return domain in domain_tree
+
+
+def is_valid_knowledge_type(value: str) -> bool:
+    """检查知识类型是否合法。
+
+    Args:
+        value: 知识类型字符串。
+
+    Returns:
+        True 如果是 fact/decision/preference/experience 之一。
+    """
+    return value in VALID_KNOWLEDGE_TYPES

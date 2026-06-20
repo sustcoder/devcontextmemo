@@ -8,20 +8,35 @@ from devcontext.models.enums import (
     ALLOWED_TRANSITIONS,
     VALID_DEPTHS,
     VALID_GRANULARITIES,
+    VALID_KNOWLEDGE_RELATIONS,
+    VALID_KNOWLEDGE_TYPES,
+    VALID_RESOURCE_LINK_TYPES,
+    VALID_RESOURCE_TYPES,
     VALID_STABILITIES,
     VALID_STATUSES,
     Depth,
     Granularity,
+    KnowledgeRelation,
     KnowledgeStatus,
+    KnowledgeType,
+    ResourceLinkType,
+    ResourceType,
     Stability,
     is_valid_depth,
     is_valid_domain,
+    is_valid_knowledge_type,
     is_valid_lx,
     is_valid_status,
     is_valid_sy,
     is_valid_transition,
 )
 from devcontext.models.knowledge import CalibrationLog, KnowledgeIndex
+from devcontext.models.resource import (
+    KnowledgeKnowledgeLink,
+    Resource,
+    ResourceBlock,
+    ResourceKnowledgeLink,
+)
 from devcontext.models.source import (
     BatchLog,
     CollectorWatermark,
@@ -35,11 +50,19 @@ __all__ = [
     "Granularity",
     "Stability",
     "Depth",
+    "KnowledgeType",
+    "ResourceType",
+    "ResourceLinkType",
+    "KnowledgeRelation",
     # 合法值集合
     "VALID_STATUSES",
     "VALID_GRANULARITIES",
     "VALID_STABILITIES",
     "VALID_DEPTHS",
+    "VALID_KNOWLEDGE_TYPES",
+    "VALID_RESOURCE_TYPES",
+    "VALID_RESOURCE_LINK_TYPES",
+    "VALID_KNOWLEDGE_RELATIONS",
     # 迁移矩阵
     "ALLOWED_TRANSITIONS",
     # 校验函数
@@ -49,6 +72,7 @@ __all__ = [
     "is_valid_sy",
     "is_valid_depth",
     "is_valid_domain",
+    "is_valid_knowledge_type",
     # SQLModel 表模型
     "KnowledgeIndex",
     "CalibrationLog",
@@ -56,6 +80,10 @@ __all__ = [
     "DeadLetter",
     "CollectorWatermark",
     "BatchLog",
+    "Resource",
+    "ResourceBlock",
+    "ResourceKnowledgeLink",
+    "KnowledgeKnowledgeLink",
     # Pydantic 模型
     "Category",
 ]
