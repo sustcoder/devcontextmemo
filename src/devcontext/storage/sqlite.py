@@ -97,6 +97,15 @@ CREATE INDEX IF NOT EXISTS idx_ki_conflict_with ON knowledge_index(conflict_with
 CREATE INDEX IF NOT EXISTS idx_ki_superseded_by ON knowledge_index(superseded_by);
 """
 
+# Phase 1 双轨制：新增 knowledge_type + decision_detail 列（幂等迁移，重复执行不报错）
+_DDL_KI_KNOWLEDGE_TYPE = """
+ALTER TABLE knowledge_index ADD COLUMN knowledge_type TEXT;
+"""
+
+_DDL_KI_DECISION_DETAIL = """
+ALTER TABLE knowledge_index ADD COLUMN decision_detail TEXT;
+"""
+
 # updated_at 自动触发器（V46 修复）：
 # 条件 old.updated_at = new.updated_at 在首次触发后变为 false，天然终止递归。
 _DDL_KI_UPDATED_TRIGGER = """
@@ -208,10 +217,95 @@ BEGIN
 END;
 """
 
+# =============================================================================
+# Phase 1 双轨制：资源轨 5 张表（资源 + 分块 + FTS5 + 链接）
+# =============================================================================
+
+_DDL_RESOURCES = """
+CREATE TABLE IF NOT EXISTS resources (
+    resource_id     TEXT PRIMARY KEY,
+    uri             TEXT NOT NULL UNIQUE,
+    type            TEXT NOT NULL,
+    source_path     TEXT NOT NULL,
+    content_hash    TEXT NOT NULL,
+    version         INTEGER DEFAULT 1,
+    title           TEXT,
+    block_count     INTEGER DEFAULT 0,
+    added_at        TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    deleted_at      TEXT,
+    extra_meta       TEXT DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_resources_type ON resources(type);
+CREATE INDEX IF NOT EXISTS idx_resources_hash ON resources(content_hash);
+"""
+
+_DDL_RESOURCE_BLOCKS = """
+CREATE TABLE IF NOT EXISTS resource_blocks (
+    block_id        TEXT PRIMARY KEY,
+    resource_id     TEXT NOT NULL,
+    block_type      TEXT NOT NULL,
+    block_index     INTEGER NOT NULL,
+    content         TEXT NOT NULL,
+    content_hash    TEXT NOT NULL,
+    parent_block_id TEXT,
+    extra_meta       TEXT DEFAULT '{}',
+    FOREIGN KEY (resource_id) REFERENCES resources(resource_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_blocks_resource ON resource_blocks(resource_id);
+CREATE INDEX IF NOT EXISTS idx_blocks_type ON resource_blocks(block_type);
+"""
+
+_DDL_RESOURCE_BLOCKS_FTS = """
+CREATE VIRTUAL TABLE IF NOT EXISTS resource_blocks_fts USING fts5(
+    block_id UNINDEXED,
+    resource_id UNINDEXED,
+    block_type UNINDEXED,
+    content,
+    tokenize = 'porter unicode61'
+);
+"""
+
+_DDL_RESOURCE_KNOWLEDGE_LINKS = """
+CREATE TABLE IF NOT EXISTS resource_knowledge_links (
+    link_id         TEXT PRIMARY KEY,
+    resource_id     TEXT NOT NULL,
+    block_id        TEXT,
+    knowledge_id    TEXT NOT NULL,
+    link_type       TEXT NOT NULL,
+    confidence      REAL DEFAULT 1.0,
+    created_at      TEXT NOT NULL,
+    created_by      TEXT,
+    FOREIGN KEY (resource_id) REFERENCES resources(resource_id) ON DELETE CASCADE,
+    FOREIGN KEY (knowledge_id) REFERENCES knowledge_index(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_links_resource ON resource_knowledge_links(resource_id);
+CREATE INDEX IF NOT EXISTS idx_links_knowledge ON resource_knowledge_links(knowledge_id);
+CREATE INDEX IF NOT EXISTS idx_links_type ON resource_knowledge_links(link_type);
+"""
+
+_DDL_KNOWLEDGE_KNOWLEDGE_LINKS = """
+CREATE TABLE IF NOT EXISTS knowledge_knowledge_links (
+    link_id          TEXT PRIMARY KEY,
+    knowledge_id_a   TEXT NOT NULL,
+    knowledge_id_b   TEXT NOT NULL,
+    relation         TEXT NOT NULL,
+    occurred_at      TEXT NOT NULL,
+    created_at       TEXT NOT NULL,
+    created_by       TEXT DEFAULT 'llm_dream',
+    FOREIGN KEY (knowledge_id_a) REFERENCES knowledge_index(id) ON DELETE CASCADE,
+    FOREIGN KEY (knowledge_id_b) REFERENCES knowledge_index(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_kkl_a ON knowledge_knowledge_links(knowledge_id_a);
+CREATE INDEX IF NOT EXISTS idx_kkl_b ON knowledge_knowledge_links(knowledge_id_b);
+"""
+
 # 全部 DDL 按依赖顺序排列
 _ALL_DDL: list[str] = [
     _DDL_KNOWLEDGE_INDEX,
     _DDL_KNOWLEDGE_INDEX_INDEXES,
+    _DDL_KI_KNOWLEDGE_TYPE,        # Phase 1 migration
+    _DDL_KI_DECISION_DETAIL,       # Phase 1 migration
     _DDL_KI_UPDATED_TRIGGER,
     _DDL_CALIBRATION_LOG,
     _DDL_STAGING_QUEUE,
@@ -219,12 +313,17 @@ _ALL_DDL: list[str] = [
     _DDL_COLLECTOR_WATERMARK,
     _DDL_BATCH_LOG,
     _DDL_BATCH_LOG_UPDATED_TRIGGER,
+    _DDL_RESOURCES,                 # Phase 1 resource track
+    _DDL_RESOURCE_BLOCKS,
+    _DDL_RESOURCE_KNOWLEDGE_LINKS,
+    _DDL_KNOWLEDGE_KNOWLEDGE_LINKS,
 ]
 
 # FTS5 相关 DDL（单独处理，支持降级）
 _FTS_DDL: list[str] = [
     _DDL_KNOWLEDGE_FTS,
     _DDL_KI_FTS_DELETE_TRIGGER,
+    _DDL_RESOURCE_BLOCKS_FTS,      # Phase 1 resource FTS5
 ]
 
 
@@ -297,7 +396,14 @@ class SQLiteStore:
 
         # 执行全部基础 DDL
         for ddl in _ALL_DDL:
-            conn.executescript(ddl)
+            try:
+                conn.executescript(ddl)
+            except sqlite3.OperationalError as e:
+                # ALTER TABLE ADD COLUMN 非幂等，重复执行会报 duplicate column name
+                if "duplicate column name" in str(e):
+                    logger.debug("列已存在，跳过迁移: %s", ddl.strip()[:80])
+                else:
+                    raise
 
         # FTS5 可用性检测 + 创建
         self._fts_available = self._check_fts5_available()

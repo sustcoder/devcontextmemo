@@ -35,7 +35,7 @@ class TestTableCreation:
     """建表与表结构验证。"""
 
     def test_all_seven_tables_created(self, memory_store):
-        """init_db 后应存在 7 张表（含 FTS5 虚拟表）。"""
+        """init_db 后应存在 12 张表（含 FTS5 虚拟表 + 5 张资源轨表）。"""
         tables = memory_store.list_tables()
         expected = {
             "knowledge_index",
@@ -45,16 +45,22 @@ class TestTableCreation:
             "dead_letter",
             "collector_watermark",
             "batch_log",
+            # Phase 1 双轨制资源轨
+            "resources",
+            "resource_blocks",
+            "resource_blocks_fts",
+            "resource_knowledge_links",
+            "knowledge_knowledge_links",
         }
         assert set(tables) == expected
-        assert len(tables) == 7
+        assert len(tables) == 12
 
     def test_init_db_idempotent(self, memory_store):
         """init_db 幂等：重复调用不报错。"""
         memory_store.init_db()
         memory_store.init_db()
         tables = memory_store.list_tables()
-        assert len(tables) == 7
+        assert len(tables) == 12
 
     def test_knowledge_index_columns(self, memory_store):
         """knowledge_index 表含 V1.1 全部字段。"""
@@ -273,6 +279,34 @@ class TestIndexes:
         """batch_log 有 2 个索引。"""
         conn = memory_store.get_connection()
         indexes = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_bl_%'"
+            "SELECT name FROM sqlite_master WHERE type='index'"
+            " AND tbl_name='batch_log' AND name NOT LIKE 'sqlite_autoindex_%'"
         ).fetchall()
         assert len(indexes) == 2
+
+
+def test_resource_tables_created_after_init():
+    """Verify 5 resource track tables exist after init_db."""
+    from devcontext.storage.sqlite import SQLiteStore
+    
+    store = SQLiteStore(":memory:")
+    store.init_db()
+    tables = store.list_tables()
+    
+    assert "resources" in tables
+    assert "resource_blocks" in tables
+    assert "resource_knowledge_links" in tables
+    assert "knowledge_knowledge_links" in tables
+
+
+def test_knowledge_type_column_exists_after_migration():
+    """Verify knowledge_type column is added to knowledge_index."""
+    from devcontext.storage.sqlite import SQLiteStore
+    
+    store = SQLiteStore(":memory:")
+    store.init_db()
+    conn = store.get_connection()
+    columns = [d[1] for d in conn.execute("PRAGMA table_info(knowledge_index)").fetchall()]
+    
+    assert "knowledge_type" in columns
+    assert "decision_detail" in columns
