@@ -40,28 +40,37 @@ class WatermarkStore:
 
     @staticmethod
     def save(source_name: str, watermarks: dict, filepath: Path | None = None):
-        """持久化水位线。
+        """持久化水位线（进程安全）。
 
         Args:
             source_name: 数据源名称。
             watermarks: 水位线字典。
             filepath: 水位线文件路径。
         """
+        import fcntl
+
         path = filepath or DEFAULT_WATERMARK_FILE
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        existing = {}
-        if path.exists():
+        with open(path, "a+", encoding="utf-8") as f:
             try:
-                existing = json.loads(path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                pass
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                f.seek(0)
+                existing = {}
+                try:
+                    existing = json.loads(f.read() or "{}")
+                except (json.JSONDecodeError, OSError):
+                    pass
 
-        existing[source_name] = watermarks
-        path.write_text(
-            json.dumps(existing, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+                existing[source_name] = watermarks
+
+                f.seek(0)
+                f.truncate()
+                f.write(
+                    json.dumps(existing, indent=2, ensure_ascii=False)
+                )
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
 class PollingCollector(BaseCollector):

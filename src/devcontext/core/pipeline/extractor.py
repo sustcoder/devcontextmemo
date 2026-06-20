@@ -185,6 +185,12 @@ class Extractor:
 可用领域：
 {domain_list}
 
+知识类型（knowledge_type）：
+- fact: 事实描述（"端口是8080"、"数据库名是mydb"）
+- decision: 显式选型/决策（"选了Redis而非Memcached"、"权衡后决定用方案A"）。关键词：选了、决定、权衡、考虑到、因为
+- preference: 用户/团队的偏好或习惯（"我们习惯用vim"、"团队规范是用black格式化"、"我偏好函数式风格"）
+- experience: 引用过去项目经验（"上次做X时"、"踩过坑"、"之前遇到过"、"教训是"）
+
 输出 JSON 格式（严格遵循）：
 {{
   "extracted_items": [
@@ -194,6 +200,7 @@ class Extractor:
       "stability": "S3",
       "depth": "KH",
       "domain": "order",
+      "knowledge_type": "fact",
       "confidence": 0.88,
       "occurred_at": "2026-06-18T10:01:00Z",
       "source_messages": [2]

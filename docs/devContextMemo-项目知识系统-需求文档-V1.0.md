@@ -76,7 +76,7 @@
 
 | 视图 | 形态 | 使用者 | 核心用途 |
 |------|------|--------|---------|
-| 人类视图 | Markdown 文件（`.devContextMemo/knowledge/`） | 人 | 直接阅读、审核、编辑、搜索 |
+| 人类视图 | Markdown 文件（`.claw/knowledge/`） | 人 | 直接阅读、审核、编辑、搜索 |
 | AI 视图 | DB 索引层（SQLite FTS5 + 摘要 + 元数据） | AI / MCP Server | 高效检索、精确过滤、自动注入 |
 
 **关键约束**：
@@ -120,7 +120,7 @@
 | 维度 | 要求 |
 |------|------|
 | 机器维度 | 存储在 SQLite 索引层中（URI + FTS5 + 向量 + 链接关系 + 摘要），支持高效检索 |
-| 人维度 | Markdown 文件持久化到 `.devContextMemo/knowledge/<domain>/`，可直接查看和编辑 |
+| 人维度 | Markdown 文件持久化到 `.claw/knowledge/<domain>/`，可直接查看和编辑 |
 | 溯源维度 | 每条知识记录来自哪个数据源的哪段内容 |
 | 校准维度 | 记录最后校准时间、校准依据、当前状态 |
 | 同步维度 | MD → DB 单向派生，DB 可随时从 MD 重建 |
@@ -130,10 +130,10 @@
 
 | Given | When | Then |
 |-------|------|-------|
-| `.devContextMemo/knowledge/order/` 下有 `payment-flow.md`（权威源） | 执行 `search_knowledge(query="支付流程")` | DB 索引返回该文件 URI，content 取自 MD 文件（非 DB） |
-| `.devContextMemo/knowledge/` 下有 5 个 MD 文件，DB 为空 | 执行 `devContextMemo rebuild-index` | DB 重建完成，6 张表记录数与 MD 文件数一致 |
-| `.devContextMemo/knowledge/order/payment.md` 被人工编辑保存 | 5 秒内执行 `search_knowledge(query="payment")` | 检索结果包含编辑后的内容摘要（DB 索引已同步） |
-| DB 索引文件 `.devContextMemo/devContextMemo.db` 被删除 | 执行 `devContextMemo rebuild-index` | 从 MD 文件完整重建 DB，知识无丢失 |
+| `.claw/knowledge/order/` 下有 `payment-flow.md`（权威源） | 执行 `search_knowledge(query="支付流程")` | DB 索引返回该文件 URI，content 取自 MD 文件（非 DB） |
+| `.claw/knowledge/` 下有 5 个 MD 文件，DB 为空 | 执行 `claw rebuild-index` | DB 重建完成，6 张表记录数与 MD 文件数一致 |
+| `.claw/knowledge/order/payment.md` 被人工编辑保存 | 5 秒内执行 `search_knowledge(query="payment")` | 检索结果包含编辑后的内容摘要（DB 索引已同步） |
+| DB 索引文件 `.claw/claw.db` 被删除 | 执行 `claw rebuild-index` | 从 MD 文件完整重建 DB，知识无丢失 |
 
 ### 诉求②：知识有效性 — 与时间无关
 
@@ -232,7 +232,7 @@ Domain 与三元组正交——每条知识同时有 (Lx, Sy, Depth, Domain) 四
 | L1+L2 知识总量 > 4K tokens（S1 原则 10 条 + S2 架构 20 条） | 新 OpenCode 会话启动，InjectionService 生成 AGENTS.md | 触发截断策略：优先保留 S1（原则），其次 S2（架构），截断 L3（按需）；`dev status` 显示 `injection_truncation=true`，列出被截断的知识 ID |
 | L1+L2 知识总量 ≤ 4K tokens | 新 OpenCode 会话启动 | AGENTS.md 完整包含所有 L1 和 L2 知识，无截断 |
 | AGENTS.md 生成失败（LLM 调用超时） | 新会话启动 | 降级：仅注入 L1 知识（S1 原则，最小可用）；`dev status` 显示 `injection_fallback=L1_ONLY`；下次会话重试完整注入 |
-| 三层注入中 L3 按需检索失败（FTS5 索引损坏） | 执行 `get_knowledge(domain, query)` | 返回空结果（非崩溃）；`dev status` 显示 `l3_search_status=DEGRADED`；建议执行 `devContextMemo rebuild-index` |
+| 三层注入中 L3 按需检索失败（FTS5 索引损坏） | 执行 `get_knowledge(domain, query)` | 返回空结果（非崩溃）；`dev status` 显示 `l3_search_status=DEGRADED`；建议执行 `claw rebuild-index` |
 
 
 ### 诉求④-B：知识防腐烂机制
@@ -266,7 +266,7 @@ Domain 与三元组正交——每条知识同时有 (Lx, Sy, Depth, Domain) 四
 |-------|------|-------|
 | 文件 `OrderService.java` 被 git commit 修改 | 触发校准引擎 | 所有 linked_to_file 包含 `OrderService.java` 的知识进入校准队列 |
 | 知识 K 状态=ACTIVE，距上次校准 120 天 | 执行 `dev dream`（巩固命令） | 知识 K 标记为 STALE（suspicious） |
-| `.devContextMemo/knowledge/` 下新增文件 `refund.md`，但知识库无对应知识 | 每周覆盖率审计 | 生成「覆盖盲区」报告，建议补充知识 |
+| `.claw/knowledge/` 下新增文件 `refund.md`，但知识库无对应知识 | 每周覆盖率审计 | 生成「覆盖盲区」报告，建议补充知识 |
 | 知识 K 标注 S2（架构级），但 180 天未更新 | 执行 `dev status` | 显示该知识标记 `needs_review=true` |
 
 ---
@@ -470,7 +470,7 @@ Step 6: 巩固   — 晋升评估 + 修剪 + supplement 合并
 | `batch_*.jsonl` 中有 50 条消息 | 执行提炼器（Step2a） | 输出 `summary_*.jsonl`，每条含 (Lx, Sy, Depth, Domain) + `occurred_at` 标注 | 模块测试 Step 2a |
 | `summary_*.jsonl` 中有 50 条结构化摘要 | 执行提取器（Step2b） | 输出 `knowledge_*.jsonl`，每条含 `entities` + `relations` 字段 | 模块测试 Step 2b |
 | `knowledge_*.jsonl` 中有 1 条置信度=0.5 的知识 | 执行 validator + deduplicator（Step3-4） | `code_verified=false`，`top_similar_id` 如有相似则非空 | 模块测试 Step 3+4 |
-| `knowledge_*.jsonl` 通过验证 | 执行 writer + consolidator（Step5-6） | `.devContextMemo/staging/` 下生成 MD 文件，状态=DRAFT，SQLite 同步写入 | 模块测试 Step 5+6 |
+| `knowledge_*.jsonl` 通过验证 | 执行 writer + consolidator（Step5-6） | `.claw/staging/` 下生成 MD 文件，状态=DRAFT，SQLite 同步写入 | 模块测试 Step 5+6 |
 | 已有知识 K2，新提炼 K2' 相似度=0.94 | 执行 deduplicator（Step4） | K2' 不写入 DB，标记 `conflict_group=G1`，进入冲突队列，`dev review` 显示冲突 | 模块测试 Step 4 |
 
 ---
@@ -482,7 +482,7 @@ Step 6: 巩固   — 晋升评估 + 修剪 + supplement 合并
 **MD 文件 = 权威源，DB 索引层 = 派生品（可重建）。**
 
 ```
-MD 文件 (.devContextMemo/knowledge/<domain>/*.md)  ← 唯一权威源 (Git 追踪)
+MD 文件 (.claw/knowledge/<domain>/*.md)  ← 唯一权威源 (Git 追踪)
        │ (写时钩子，单向派生)
        ↓
 DB 索引层 (SQLite, WAL 模式)            ← 派生索引 (不含 content)
@@ -506,7 +506,7 @@ MCP Server                              ← AI 查询入口
     ├── session_<uuid>.jsonl     # OpenCode 适配器输出
     └── session_<uuid>.jsonl     # Comate 适配器输出
 
-.devContextMemo/
+.claw/
 ├── staging/                     # 待审核知识（DRAFT/STAGED/PENDING_REVIEW/CANDIDATE）
 ├── knowledge/<domain>/          # 已激活知识（ACTIVE/COLD/STALE）
 │   ├── order/
@@ -515,15 +515,15 @@ MCP Server                              ← AI 查询入口
 │   └── standards/
 ├── deprecated/                  # 已废弃知识
 ├── AGENTS.knowledge.md          # 自动维护的动态知识注入
-└── devContextMemo.db                      # SQLite 索引数据库
+└── claw.db                      # SQLite 索引数据库
 ```
 
 #### 诉求⑤ 存储架构验收标准
 
 | Given | When | Then |
 |-------|------|-------|
-| `.devContextMemo/knowledge/order/pay.md` 被人工编辑保存 | 写时钩子触发 | SQLite `knowledge` 表对应记录的 `content_hash` 和 `updated_at` 同步更新 |
-| `.devContextMemo/devContextMemo.db` 被删除 | 执行 `devContextMemo rebuild-index` | 从所有 MD 文件完整重建 DB，记录数一致，FTS5 索引可用 |
+| `.claw/knowledge/order/pay.md` 被人工编辑保存 | 写时钩子触发 | SQLite `knowledge` 表对应记录的 `content_hash` 和 `updated_at` 同步更新 |
+| `.claw/claw.db` 被删除 | 执行 `claw rebuild-index` | 从所有 MD 文件完整重建 DB，记录数一致，FTS5 索引可用 |
 | 写入 MD 文件时路径含 `../` | 执行 writer（Step5） | 写入被拒绝，`realpath` 校验失败，记录安全事件 |
 
 ---
@@ -635,7 +635,7 @@ devContextMemo 与 Claude Code Memory 最大的差异化能力。Claude Code 只
 
 ## 八、冷启动（Phase 0）
 
-系统上线时通过 `/devContextMemo-init` 命令按模块交互式初始化：
+系统上线时通过 `/claw-init` 命令按模块交互式初始化：
 
 1. 扫描模块包结构
 2. LLM 生成 S1 原则 + S2 架构骨架
@@ -648,9 +648,9 @@ devContextMemo 与 Claude Code Memory 最大的差异化能力。Claude Code 只
 
 | Given | When | Then |
 |-------|------|-------|
-| 空项目，`.devContextMemo/` 目录不存在 | 执行 `dev init` | 生成 `.devContextMemo/` 目录 + AGENTS.md 骨架，状态=DRAFT |
+| 空项目，`.claw/` 目录不存在 | 执行 `dev init` | 生成 `.claw/` 目录 + AGENTS.md 骨架，状态=DRAFT |
 | 项目有 `src/order/` 和 `src/payment/` 两个模块 | 执行 `dev init` | LLM 生成 S1 原则 + S2 架构骨架，每个模块 1 条知识 |
-| `dev init` 生成 DRAFT 知识 10 条 | 人工审核通过 8 条 | 8 条状态→STAGED，写入 `.devContextMemo/knowledge/` |
+| `dev init` 生成 DRAFT 知识 10 条 | 人工审核通过 8 条 | 8 条状态→STAGED，写入 `.claw/knowledge/` |
 | `dev init` 生成的 AGENTS.md | 新 OpenCode 会话启动 | AGENTS.md 内容自动注入上下文（≤4K tokens） |
 
 ---
@@ -698,7 +698,7 @@ devContextMemo 与 Claude Code Memory 最大的差异化能力。Claude Code 只
 | 凭据泄露（L2）— 高置信度 | 知识内容含 `sk-abc123def456GHI789jkl0MNO`（匹配 API Key 正则） | SecurityScanner L2 检测 | **直接拒绝写入**；返回错误码 `SECURITY_CREDENTIAL_LEAK`；记录安全事件（凭据部分打星后存储） |
 | 凭据泄露（L2）— 低置信度误报 | 知识内容含 `api_key: "test"`（测试环境占位符） | SecurityScanner L2 检测 | **允许写入**，但标记 `security_flag=CREDENTIAL_SUSPECT`；`dev review` 提示人工确认 |
 | Unicode 污染（L3） | 知识内容含 U+200B（零宽空格） | SecurityScanner L3 检测 | **拒绝写入**，返回错误码 `SECURITY_UNICODE_INVISIBLE`；提示用户清理后重试 |
-| 安全事件审计 | 发生任意 L1/L2/L3 拒绝事件 | 执行 `devContextMemo security-audit` | 输出安全事件列表（时间/类型/来源文件/处理动作），凭据部分打星 |
+| 安全事件审计 | 发生任意 L1/L2/L3 拒绝事件 | 执行 `claw security-audit` | 输出安全事件列表（时间/类型/来源文件/处理动作），凭据部分打星 |
 
 > **决策原则**：L1 提示注入一律拒绝（无脱敏可能）；L2 凭据泄露高置信度拒绝，低置信度标记后人工审核；L3 Unicode 拒绝（可自动清洗，但 V1.0 为先拒绝后手动清洗）。
 
@@ -718,8 +718,8 @@ devContextMemo 与 Claude Code Memory 最大的差异化能力。Claude Code 只
 | `staging/` 有 5 条 `DRAFT` 状态条目 | 执行 `dev review --batch-approve --all-draft` | 全部 5 条批量 approve，输出 `✅ Batch approved: 5 items`；若有任一条置信度 < 0.8，暂停并提示确认 |
 | `dev review` 列出条目 K（已被 K' 取代，superseded_by = K'.id）| 执行 `dev review --history K'` | 展示版本链：K（DEPRECATED） → K'（ACTIVE），含每次变更的时间、来源对话、变更摘要 |
 | `dev review` 列出条目 K（security_flag = CREDENTIAL_SUSPECT）| 执行 `dev review --show-security K` | 展示安全标记详情（检测层级 L1/L2/L3、匹配规则、可疑片段脱敏显示），人工确认后移除标记或拒绝写入 |
-| MCP Client（如 Claude Code）调用 `devContextMemo_review_list` Tool | 传入 `status_filter=["DRAFT","FLAGGED"]` | 返回 JSON：待审核条目列表（含 id/path/status/confidence/created_at/conflict_group）|
-| MCP Client 调用 `devContextMemo_review_decide` Tool | 传入 `id=K, decision="approve"` | 返回 `{success: true, new_status: "ACTIVE", promoted_path: "knowledge/xxx.md"}` |
+| MCP Client（如 Claude Code）调用 `claw_review_list` Tool | 传入 `status_filter=["DRAFT","FLAGGED"]` | 返回 JSON：待审核条目列表（含 id/path/status/confidence/created_at/conflict_group）|
+| MCP Client 调用 `claw_review_decide` Tool | 传入 `id=K, decision="approve"` | 返回 `{success: true, new_status: "ACTIVE", promoted_path: "knowledge/xxx.md"}` |
 
 ---
 
@@ -727,7 +727,7 @@ devContextMemo 与 Claude Code Memory 最大的差异化能力。Claude Code 只
 
 | Phase | 核心交付 | 覆盖 |
 |------|------|------|
-| **Phase 0** | 冷启动 `/devContextMemo-init` | 骨架知识 |
+| **Phase 0** | 冷启动 `/claw-init` | 骨架知识 |
 | **Phase 1** | 统一接收层（适配器+原始存储）+ 8 Step 加工流水线（Step2 拆分为 2a+2b）+ 类级别校准 + MCP Tool 检索 + AGENTS.md 同步 + 实体提取与图关系 + 自动时间提取 | 核心闭环 |
 | **Phase 2** | 方法级签名校准 + 跨层知识图谱 + 剩余 4 维数据源 + 深度反思（reflect）+ 向量索引 + 批量优化 | 精加工 |
 | **Phase 3** | 多 Agent 协作 + 角色感知适配 + 完整防腐烂 | 生态化 |

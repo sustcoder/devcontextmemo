@@ -46,6 +46,9 @@ from devcontext.storage.sqlite import SQLiteStore
 logger = logging.getLogger(__name__)
 
 
+_BATCH_SIZE = 500  # 分页大小，防止全表加载 OOM
+
+
 class ConsolidationReport:
     """巩固报告。
 
@@ -121,30 +124,34 @@ class Consolidator:
         report = ConsolidationReport()
         conn = self.db.get_connection()
 
-        # 扫描全表
-        rows = conn.execute("SELECT * FROM knowledge_index ORDER BY created_at").fetchall()
+        # 扫描全表 — 分页处理防止大量数据 OOM
         columns = [
             desc[0] for desc in conn.execute("SELECT * FROM knowledge_index LIMIT 0").description
         ]
-        report.total_scanned = len(rows)
+        offset = 0
+        while True:
+            rows = conn.execute(
+                "SELECT * FROM knowledge_index ORDER BY created_at LIMIT ? OFFSET ?",
+                (_BATCH_SIZE, offset),
+            ).fetchall()
+            if not rows:
+                break
+            report.total_scanned += len(rows)
 
-        # 容量检查
-        check_capacity(len(rows))
+            # 容量检查（首次批次）
+            if offset == 0:
+                check_capacity(len(rows))
 
-        for row in rows:
-            record = dict(zip(columns, row, strict=False))
-            try:
-                detail = self._process_record(record, report)
-                report.details.append(detail)
-            except Exception as e:
-                report.errors += 1
-                logger.error("Failed to process %s: %s", record.get("id"), e)
-                report.details.append(
-                    {
-                        "id": record.get("id"),
-                        "error": str(e),
-                    }
-                )
+            for row in rows:
+                record = dict(zip(columns, row, strict=False))
+                try:
+                    detail = self._process_record(record, report)
+                    report.details.append(detail)
+                except Exception as e:
+                    logger.warning("Skipping record %s: %s", record.get("id"), e)
+                    report.errors += 1
+
+            offset += _BATCH_SIZE
 
         logger.info("Consolidation complete: %s", report)
         return report
