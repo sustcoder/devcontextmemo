@@ -138,3 +138,61 @@ pending_review ──► active     draft ──► active  （复活）        
 - 26 条明确禁止的跨级跳跃
 - 6 条关键生命周期路径（绿色通道、审核、冷却、复活、草稿晋升等）
 - 防御性测试（同状态、未知状态、deprecated 循环）
+
+---
+
+## #4: 双轨制（记忆轨 + 资源轨）检索层架构
+
+**日期:** 2026-06-19
+**关联:** Phase 1 资源轨设计，`ContextQueryEngine`
+
+**背景:** 方案要求新增资源轨（独立存储需求/Spec/设计文档），与已有记忆轨（对话提炼知识）并行存储、交叉检索、显式链接。
+
+**架构决策 — Facade + 双 Service:**
+
+```
+MCP Tool / CLI / API（统一入口）
+         │
+         ▼
+  ContextQueryEngine   ← 新建 facade 层（合并去重 + 三级回退排序）
+    │         │
+    ├─────────┤
+    ▼         ▼
+KnowledgeService  ResourceService     ← 各自独立，零改动知识侧
+    │              │
+    ▼              ▼
+SQLiteStore    ResourceStore          ← 存储层
+```
+
+**为什么不重构 KnowledgeService 为统一引擎:**
+
+| 方案 | 问题 |
+|------|------|
+| 重构为统一引擎 | 破坏已有 275 行 KnowledgeService 和测试；两轨查询逻辑差异被揉在一起 |
+| 两轨独立 + 上层合并 | 合并逻辑散落在 MCP/API/CLI 三层，重复 |
+| **Facade + 双 Service** | 各自独立可测，合并集中一处，知识侧零改动 |
+
+**模块结构:**
+
+```
+src/devcontext/
+├── services/
+│   ├── knowledge.py          # KnowledgeService（已有，不动）
+│   ├── resource.py           # ResourceService（新建）
+│   └── context_engine.py     # ContextQueryEngine（新建 facade）
+├── models/
+│   ├── knowledge.py          # KnowledgeIndex（已有）
+│   └── resource.py           # Resource + ResourceBlock + ResourceLink（新建）
+├── storage/
+│   └── resource_store.py     # ResourceStore（新建）
+```
+
+**相关决策（from 设计方案 review）:**
+
+| # | 问题 | 决策 |
+|---|------|------|
+| Q2 | MCP Tool 扩展方式 | 扩展现有 `mcp/tools.py`，不新建 module |
+| Q3 | DB schema 变更 | 研发阶段可删历史数据，不依赖 migration |
+| Q4 | Markdown 块解析 | 使用 `markdown-it-py` 库 |
+| Q5 | 检索层架构 | 上述 Facade + 双 Service |
+| Q7 | 资源变更检测 | 使用现有 `utils/diff.py`（git diff），不做 post-commit hook |
