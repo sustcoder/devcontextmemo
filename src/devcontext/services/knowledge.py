@@ -120,6 +120,7 @@ class KnowledgeService:
             "granularity": record.get("granularity", "L2"),
             "stability": record.get("stability", "S3"),
             "depth": record.get("depth", "KH"),
+            "knowledge_type": record.get("knowledge_type", "fact"),
             "status": "staged",
             "confidence": record.get("confidence", 0.5),
             "code_verified": record.get("code_verified", 0),

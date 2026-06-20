@@ -409,6 +409,7 @@ def sample_knowledge_record():
         "granularity": "L2",
         "stability": "S3",
         "depth": "KH",
+        "knowledge_type": "fact",
         "status": "staged",
         "confidence": 0.88,
         "code_verified": 1,

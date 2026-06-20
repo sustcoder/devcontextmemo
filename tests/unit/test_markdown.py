@@ -93,8 +93,8 @@ class TestRead:
         rec = markdown_store.read(path)
         for field in (
             "id", "title", "domain", "sub_domain", "granularity", "stability",
-            "depth", "status", "confidence", "code_verified", "concept_tags",
-            "source_session", "created_at", "updated_at", "uri",
+            "depth", "knowledge_type", "status", "confidence", "code_verified",
+            "concept_tags", "source_session", "created_at", "updated_at", "uri",
         ):
             assert field in rec, f"missing field: {field}"
 
@@ -281,9 +281,9 @@ class TestFrontmatterFormat:
         content = path.read_text(encoding="utf-8")
         for field in (
             "id:", "title:", "domain:", "sub_domain:", "granularity:",
-            "stability:", "depth:", "status:", "confidence:", "code_verified:",
-            "concept_tags:", "source_session:", "created_at:", "updated_at:",
-            "uri:",
+            "stability:", "depth:", "knowledge_type:", "status:", "confidence:",
+            "code_verified:", "concept_tags:", "source_session:", "created_at:",
+            "updated_at:", "uri:",
         ):
             assert field in content, f"frontmatter missing: {field}"
 
@@ -294,3 +294,13 @@ class TestFrontmatterFormat:
         path = markdown_store.write_to_knowledge(dict(sample_knowledge_record))
         content = path.read_text(encoding="utf-8")
         assert "status: staged" in content
+
+    def test_frontmatter_includes_knowledge_type(
+        self, markdown_store, sample_knowledge_record
+    ):
+        """Verify frontmatter output includes knowledge_type field."""
+        record = dict(sample_knowledge_record)
+        record["knowledge_type"] = "decision"
+        path = markdown_store.write_to_staging(record)
+        content = path.read_text(encoding="utf-8")
+        assert "knowledge_type: decision" in content

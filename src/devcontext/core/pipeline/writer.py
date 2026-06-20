@@ -151,10 +151,12 @@ class Writer:
             "granularity": record.get("granularity", "L2"),
             "stability": record.get("stability", "S3"),
             "depth": record.get("depth", "KH"),
+            "knowledge_type": record.get("knowledge_type", "fact"),
             "status": record.get("status", "candidate"),
             "confidence": confidence,
             "code_verified": record.get("code_verified", 0),
             "concept_tags": self._extract_concept_tags(record),
+            "decision_detail": self._serialize_decision_detail(record),
             "source_session": record.get("session_id"),
             "created_at": now,
             "updated_at": now,
@@ -212,6 +214,23 @@ class Writer:
             status=md_record["status"],
             target=target,
         )
+
+    @staticmethod
+    def _serialize_decision_detail(record: dict[str, Any]) -> str | None:
+        """序列化 decision_detail 为 JSON 字符串。
+
+        Args:
+            record: knowledge 记录。
+
+        Returns:
+            JSON 字符串，或 None（非 decision 类型）。
+        """
+        detail = record.get("decision_detail")
+        if not detail:
+            return None
+        if isinstance(detail, str):
+            return detail
+        return json.dumps(detail, ensure_ascii=False)
 
     def _generate_id(self) -> str:
         """生成知识 ID：kw-{YYYYMMDD}-{seq}。"""

@@ -54,10 +54,12 @@ _MANAGED_FIELDS = (
     "granularity",
     "stability",
     "depth",
+    "knowledge_type",       # Phase 1
     "status",
     "confidence",
     "code_verified",
     "concept_tags",
+    "decision_detail",      # Phase 1 (JSON string)
     "source_session",
     "created_at",
     "updated_at",
@@ -223,6 +225,8 @@ class MarkdownStore:
             "granularity": record["granularity"],
             "stability": record["stability"],
             "depth": record["depth"],
+            "knowledge_type": record.get("knowledge_type"),
+            "decision_detail": record.get("decision_detail"),
             "status": record["status"],
             "confidence": float(record.get("confidence", 0.0)),
             "code_verified": int(record.get("code_verified", 0)),
