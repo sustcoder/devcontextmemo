@@ -1,0 +1,783 @@
+# devContextMemo Phase 1 数据源偏离度调研与修复方案
+
+> 调研日期：2026-06-19
+> 核心问题：当前 Phase 1 只采集①AI沟通记录+⑥Git历史，缺失②③④⑤四维数据源——而这四维恰恰是"项目知识"的骨架
+
+---
+
+## 一、第一性原理分析
+
+### 1.1 项目知识的本质是什么？
+
+让 AI "懂" 一个项目，需要四类信息：
+
+| 类别 | 例子 | 对应6维 | 当前Phase1 |
+|------|------|:--:|:--:|
+| **为什么做**（需求/动机） | PRD、用户故事、业务目标 | ③需求文档 | ❌缺失 |
+| **为什么这样做**（决策/理由） | "选H2而不是MySQL"、"先DB后MD" | ②决策记录 | ❌缺失 |
+| **怎么做**（规范/蓝图） | Spec、API Doc、DB Schema、架构图 | ④Spec文档 | ❌缺失 |
+| **做了什么**（实现/结果） | 源代码、git diff | ⑤源代码 / ⑥Git历史 | ⑤❌ / ⑥✅ |
+
+对话（①）只是**过程载体**——需求、决策、规范都**埋在对话里**，但未被独立采集和结构化索引。
+
+### 1.2 偏离度量化
+
+当前 Phase 1 存的信息量 vs 项目知识实际需要的信息量：
+
+| 维度 | Phase1存储比例 | 知识价值权重 | **偏离度** |
+|------|:--:|:--:|:--:|
+| ①对话原文 | 100% | 30%（过程载体，非知识本体） | 低 |
+| ②决策记录 | 0%（埋在对话中，未独立提取） | 25% | **高** |
+| ③需求文档 | 0% | 20% | **高** |
+| ④Spec文档 | 0% | 15% | **高** |
+| ⑤源代码 | 0%（无AST分析） | 10%（校准基础） | 中 |
+| ⑥Git历史 | 100% | — | 无 |
+
+**总偏离度：60% 的项目知识骨架在 Phase 1 中缺失。**
+
+---
+
+## 二、同类产品调研
+
+### 2.1 OpenViking（字节跳动）—— Resource 双轨制
+
+**核心机制**：对话记忆 + 文档资源 **并行存储、互相链接**
+
+| 轨道 | 存储 | 内容 | 检索方式 |
+|------|------|------|---------|
+| 记忆轨 | `viking://user/{id}/peers/{peer}/memory/` | 从对话提炼的事实/偏好/事件 | 语义检索 |
+| 资源轨 | `viking://resources/` | 文档/代码/Git仓库/PDF/飞书文档 | 目录浏览+语义检索 |
+
+**关键设计**：
+- `add_resource` API：上传任何文档（PDF/MD/DOCX/代码/Git仓库）→ Parse → Resource Tree → AGFS持久化 → 向量化+摘要
+- `reason` 参数：添加资源时写 reason → 资源与记忆**自动链接**（通过 session commit 流水线）
+- Watch 机制：定时监控文档变化 → 增量更新 → 自动重新提炼记忆
+- 两条轨道交叉检索：检索结果同时返回 `memories` + `resources`
+
+**对 devContextMemo 的启示**：需求文档和 Spec 不应该只"埋在对话里"，应该作为独立资源被采集、索引、监控变化。资源与记忆之间需要显式链接关系。
+
+### 2.2 Hindsight（Vectorize）—— Document 源追溯
+
+**核心机制**：每条记忆追溯到源文档
+
+| 层 | 存储 | 关系 |
+|---|------|------|
+| Document | `documents` 表 | 文件元数据+content_hash |
+| Chunk | 分块原文 | document → chunks（保留原始文本段落） |
+| MemoryUnit | 提炼的事实 | chunk → memory_units（一条记忆追溯到文档的分块） |
+| Observation | 合并后的洞察 | memory_units → observation（多条记忆合并为更高层洞察） |
+
+**关键设计**：
+- `retain` API：可直接提交文本，也可通过 `document_id` 关联到源文档
+- 文件上传 → 自动转换(Markitdown/Iris/LlamaParse) → 分块 → 提炼 → 记忆
+- Delta更新：同 document_id 重复提交 → content_hash 对比 → 只处理变更部分
+- 删除文档 → 级联删除关联记忆 + 观察重构
+
+**对 devContextMemo 的启示**：每条知识应该记录"来自哪个文档的哪个段落"（溯源），文档变化时只增量更新关联知识（而非全量重建）。
+
+### 2.3 Claude Code —— 文件即知识
+
+**核心机制**：项目知识全部以 MD 文件形式存在，无独立文档采集
+
+| 机制 | 文件 | 内容 |
+|------|------|------|
+| 恒常注入 | `CLAUDE.md` | 项目概述+编码规范+架构决策（~4K tokens） |
+| 按需加载 | `.claude/rules/*.md` | 分目录/分场景的规则（glob匹配，懒加载） |
+| 自动发现 | `CLAUDE.md` in subdirs | 子目录的局部知识（嵌套加载） |
+
+**关键特点**：
+- 没有文档采集机制——假设所有知识已经被人写进 MD 文件了
+- 没有自动提炼——纯人工维护
+- 依赖人的自觉性来维护知识文档
+
+**对 devContextMemo 的启示**：Claude Code 方案是纯人工维护的极端，说明**文件即知识**的范式是可行的，但需要自动化提炼来降低人的维护负担。
+
+### 2.4 Cursor —— 规则注入
+
+**核心机制**：规则文件 + Codebase Indexing
+
+| 机制 | 内容 |
+|------|------|
+| Project Rules | `.cursor/rules/*.mdc`（描述+glob匹配+自动/手动触发） |
+| User Rules | 全局个人偏好 |
+| Codebase Indexing | 自动扫描代码库，建立语义索引 |
+
+**关键特点**：
+- 规则文件是**人工编写的指令**，不是从对话/文档中自动提炼的
+- Codebase Indexing 是代码级索引，不覆盖需求/Spec/决策
+
+### 2.5 Augment Code —— 上下文引擎
+
+**核心机制**：实时上下文引擎 + 持久记忆
+
+- 200K token 上下文窗口 + 实时代码库索引
+- 持久记忆（学习编码风格、记住重构历史、适应团队规范）
+- 与 JIRA/Linear/Notion/Confluence 集成——**文档需求直接变成代码上下文**
+- 关键：上下文引擎会主动从外部文档系统（JIRA工单、Notion文档）中提取信息注入
+
+**对 devContextMemo 的启示**：Augment 已经在做"从外部文档系统采集需求/规范"——说明这不是 Phase 2 才该做的事。
+
+### 2.6 知识形态战略选择：多源保留 vs 标准化
+
+**核心问题**：是保留多源原始知识（检索时用置信度评估），还是将知识标准化为统一版本（检索时只读标准版）？
+
+#### Token 经济性分析
+
+**模式 A：多源保留 + 置信度评估**
+
+```
+检索 query → 返回 N 条多源知识条目（同一问题可能有 spec版、对话版、代码版）
+  → LLM 读 N 条原文（每条 ~200 tokens）
+  → LLM 判断冲突 + 置信度排序（~150 tokens 推理）
+  → LLM 选择最可信的那条 + 附带来源说明
+  → 注入上下文：1条选定知识 + 来源标注（~250 tokens）
+
+单次检索消耗：N×200 + 150 + 250 = (N×200 + 400) tokens
+注入有效知识：~250 tokens
+有效率（N=3时）：25%
+```
+
+**模式 B：标准化知识 + 直接注入**
+
+```
+检索 query → 返回 1 条标准化知识（已经融合确认过的）
+  → LLM 直接注入上下文（~250 tokens）
+
+单次检索消耗：250 tokens
+注入有效知识：~250 tokens
+有效率：100%
+```
+
+#### 综合对比（月度，假设 500 次检索 + 50 次知识变更）
+
+| | 模式 A（多源+置信度） | 模式 B（标准化） |
+|--|--|--|
+| 检索消耗 | 500 × (N×200+400) = 500K（N=3） | 500 × 250 = 125K |
+| 维护消耗 | 0（全自动） | 50 × 300 = 15K（AI提炼+人工确认） |
+| **月总消耗** | **500K** | **140K** |
+| 有效率 | 25% | 100% |
+| 冲突风险 | 每次检索都要处理 | 预处理时解决，检索时零冲突 |
+
+**结论：标准化模式 token 消耗是多源模式的 1/4，综合省 3.5 倍。**
+
+#### 标准化的隐性风险
+
+标准化知识如果过期，注入的就是**错误知识**——比多源冲突还糟糕。因此最优方案不是纯 A 或纯 B，而是 **B 为主 + A 为兜底**的三级回退：
+
+```
+优先注入标准化知识（省 token，效率最高）
+  ↓ 置信度下降 / 过期标记 / knowledge_status = STALE
+回退到多源原始知识（保准确性，token 成本上升但信息可信）
+  ↓ 仍然不够
+回退到完整资源文件（兜底，最精确但 token 最高）
+```
+
+这三级回退恰好解决了标准化知识的过期风险——标准化是常态路径（95%场景），多源原文是异常路径（5%场景），完整资源是极端路径（<1%场景）。
+
+#### 业界实践对照
+
+| 产品 | 选择了哪条路 | 原因 |
+|------|---------|------|
+| **Claude Code** | 模式 B（标准化 `CLAUDE.md`） | 人维护，假设标准版永远准确 |
+| **Hindsight** | 模式 A+（多源+Observation层合并） | 自动提炼，不做"一份标准" |
+| **OpenViking** | 模式 A（双轨制，交叉返回） | 不融合，让用户判断 |
+| **Augment** | 无固定模式（实时组装） | 每次对话重新拼装，不存标准版 |
+| **devContextMemo 建议路线** | **模式 B为主 + A兜底** | 标准化省token（高频操作），多源保准确（异常兜底） |
+
+### 2.7 调研结论矩阵
+
+| 产品 | 文档类知识采集 | 独立资源存储 | 资源-记忆链接 | 文档变化监控 |
+|------|:--:|:--:|:--:|:--:|
+| OpenViking | ✅ add_resource | ✅ 资源轨独立 | ✅ reason→session→memory | ✅ Watch |
+| Hindsight | ✅ file upload→retain | ✅ Document表 | ✅ document_id→memory | ✅ Delta hash |
+| Claude Code | ❌ 纯人工 | ✅ MD文件 | ❌ 无链接 | ❌ 无监控 |
+| Cursor | ❌ 纯人工规则 | ✅ rules文件 | ❌ 无链接 | ❌ 无监控 |
+| Augment | ✅ JIRA/Notion集成 | ❌（云端） | ✅ 上下文引擎 | ✅ 实时 |
+| **devContextMemo P1** | ❌ | ❌ | ❌ | ❌ |
+
+---
+
+## 三、偏离根因分析
+
+| 根因 | 具体表现 |
+|------|---------|
+| **对话优先假设** | 设计以"对话是知识的主要载体"为起点，忽略了文档才是知识的**输入和蓝图** |
+| **Phase切割过粗** | 把②③④⑤一刀切到 Phase 2，没有评估哪些可以低成本提前 |
+| **缺少资源轨概念** | 只有记忆轨（对话提炼→知识），没有资源轨（文档独立索引→检索） |
+| **追溯断裂** | 知识只追溯到对话 session，不追溯到需求文档或 Spec 文档 |
+
+---
+
+## 四、修复方案
+
+### 4.1 核心原则
+
+**双轨制：记忆轨 + 资源轨，并行存储、交叉检索、显式链接。**
+
+借鉴 OpenViking 的 Resource 轨 + Hindsight 的 Document 源追溯，将②③④⑤从 Phase 2 提前到 Phase 1，但以最低成本实现。
+
+#### 4.1.1 双轨制定义
+
+| 轨 | 职责 | 数据来源 | 存储形式 | 主要消费者 |
+|---|------|---------|---------|---------|
+| **记忆轨（Knowledge Track）** | 提炼后的结构化知识条目 | 对话 JSONL | `.devContextMemo/knowledge/<domain>/*.md` + DB `knowledge` 表 | LLM 上下文注入（恒常层 + 按需检索） |
+| **资源轨（Resource Track）** | 原始文档原文 + 索引 | 需求/Spec/设计文档 | `.devContextMemo/resources/<type>/*` + DB `resources` 表 | LLM 上下文注入（按需原文级回退） |
+
+两轨**不互相替代**：
+- 记忆轨回答"为什么这样做、决策理由是什么"（高密度低 token）
+- 资源轨回答"原文怎么说的、完整规范是什么"（高保真但 token 贵）
+- **链接表**把两轨串起来，知识条目可追溯到原文段
+
+#### 4.1.2 双轨制四大铁律
+
+1. **并行存储**——两条轨独立写入、独立索引，不能用一条轨模拟另一条（避免"对话里搜索需求文档"这种低效模式）
+2. **检索并行，注入分级**——检索阶段两轨并行查（避免漏信息），注入阶段按 L1 记忆条目 → L2 资源段落 → L3 完整资源 回退（省 token）。两轨同时查**不增加注入 token**，因为注入前会按相关度+优先级重排；"两轨都查"避免漏信息，"注入分级"控制 token 消耗，两件事不冲突。
+3. **显式链接**——知识条目 ↔ 资源段 之间的关联必须用 `resource_ref` 显式记录，不允许只藏在对话 session id 里
+4. **统一检索接口**——上层调用方（注入器、IDE 插件）只调用一个 `query()`，不直接接触任何一轨
+
+#### 4.1.3 与 Phase 1 原设计的兼容
+
+- 记忆轨的 Step 0-6 流水线**保持不变**，只新增 `KnowledgeType` 字段
+- 资源轨是**纯新增模块**，不破坏现有 JSONL→提炼→写入流程
+- 检索层（Step 5/6）从单轨改为双轨并行检索 + 链接表 join
+- DB schema 增量升级，新表全部独立，不修改已有表
+
+#### 4.1.4 与三级回退的对应关系
+
+双轨制是**存储架构**，三级回退是**检索策略**，两者正交：
+
+```
+三级回退（检索时）：
+  L1 记忆条目  → 命中就停
+  L2 资源段落  → 通过 resource_ref 跳到原文段
+  L3 完整资源  → 读整篇文档
+
+双轨制（存储时）：
+  记忆轨 ↔ 资源轨  双向链接，独立索引
+```
+
+三级回退中的"资源段落"和"完整资源"都来自资源轨；"记忆条目"来自记忆轨。资源轨的段落级索引由 §4.3 的语义分块实现。
+
+---
+
+### 4.2 Phase 1 新增数据源与采集方式
+
+| 维度 | Phase 1 采集方式 | 存储位置 | 实现成本 |
+|------|---------|---------|:--:|
+| **②决策记录** | 从对话 JSONL 中自动提取（复用 Step 2a 提炼层，新增 `decision` 类型标注） | `.devContextMemo/knowledge/decision/` + DB | 低（提炼层已有，只需扩展类型） |
+| **③需求文档** | CLI命令 `devContextMemo add-resource <path>` 手动添加，或 IDE插件拖入 | `.devContextMemo/resources/requirements/` + DB索引 | 低（文件复制+FTS5索引） |
+| **④Spec文档** | CLI命令 `devContextMemo add-resource <path>` 手动添加 | `.devContextMemo/resources/specs/` + DB索引 | 低（同③） |
+| **⑤源代码AST** | Git commit hook 触发增量扫描（只扫描变更文件） | DB索引层（类→知识映射表） | 中（需要AST parser） |
+
+### 4.3 资源轨架构
+
+```
+.devContextMemo/
+  resources/                          ← 资源轨（新增）
+    requirements/
+      prd-v1.0.md                     ← 需求文档（原文件或转换后MD）
+    specs/
+      api-design-v1.0.md              ← Spec文档
+    design/
+      architecture-v1.0.md            ← 设计文档
+  knowledge/                           ← 记忆轨（已有）
+    decision/                          ← 决策知识（从对话提炼）
+    ...
+  staging/                             ← 待审核（已有）
+  devContextMemo.db                              ← DB索引层（扩展）
+
+DB新增表：
+  resources                            ← 资源元数据（uri, type, content_hash, source_path）
+  resource_knowledge_links             ← 资源→知识链接（resource_id, knowledge_id, link_type）
+  class_knowledge_map                  ← 类→知识映射（已有设计的扩展）
+```
+
+### 4.4 资源-记忆链接机制
+
+借鉴 OpenViking 的 `reason` 参数和 Hindsight 的 `document_id`：
+
+1. 添加资源时，用户可选填 `reason`（如"这是支付模块的需求文档"）
+2. `reason` 被写入一个固定的"资源关联 session"，走 Step 2a 提炼 → 生成知识条目，知识条目自动记录 `resource_ref`
+3. 检索知识时，交叉返回：知识条目 + 关联的资源文档摘要
+
+```
+用户: devContextMemo add-resource ./prd-v1.0.md --reason "支付模块需求"
+  → 文件复制到 .devContextMemo/resources/requirements/prd-v1.0.md
+  → DB 写入 resources 表
+  → reason 进入提炼流水线 → 生成知识 "支付模块使用MySQL，需要支持3种渠道"
+  → 知识记录 resource_ref = "resources/requirements/prd-v1.0.md"
+```
+
+### 4.5 文档变化监控（Phase 1 最小化版本）
+
+Phase 1 不做自动 Watch（那需要定时调度），而是：
+
+- **手动触发更新**：`devContextMemo update-resource ./prd-v1.0.md`
+  → content_hash 对比 → 如果变化 → 增量提炼 → 更新关联知识 + 标记旧知识为 CANDIDATE_UPDATE
+- **校准引擎联动**：当 `dev dream` 或代码校准触发时，自动检查关联资源是否过期
+
+### 4.6 决策记录提取增强
+
+Step 2a 提炼层当前输出 `(Lx, Sy, Depth, Domain)` 四元组。新增：
+
+- **KnowledgeType** 字段（Step 2a — 与 Lx/Sy/Depth/Domain 同级分类维度）：
+  `fact | decision | preference | experience`
+- 决策类知识的 4 个结构化详情字段（Step 2b — 条件提取，仅 knowledge_type=decision 时触发）：
+  - `decision_context`：决策背景（"为什么需要做决策"）
+  - `decision_options`：被考虑的选项列表
+  - `decision_rationale`：选择理由
+  - `decision_consequence`：预期后果
+
+**设计理由：** KnowledgeType 是分类维度，和 Lx/Sy/Depth/Domain 同级，提炼时必须同步判断——放在 Step 2a，增量仅 ~40 tokens。4 个 decision 字段是结构化详情提取，和 Step 2b 的「实体+关系提取」性质一致，只有 decision 类型条目才提取——放在 Step 2b 做条件分支，对非 decision 条目零增量。这一拆分遵循 D69（Step 2 拆分是为了避免 prompt 过载）。
+
+这些信息在对话中是自然存在的——LLM 提炼时只需要 prompt 增加一个决策提取指令。
+
+### 4.7 与现有流水线对接
+
+```
+多数据源（OpenCode / Comate / Cursor / ...）
+       ↓ 适配器（统一接收）
+  原始会话存储（JSONL，永久保留）
+       ↓ 异步触发
+  Step 1-6: 攒批 → 提炼(LLM 2a+2b) → 验证 → 去重 → 写入 → 巩固
+                                    ↑ 新增：决策类型标注 + resource_ref
+
+手动添加资源（devContextMemo add-resource）
+       ↓ 文件复制 → DB索引 → FTS5
+  资源轨存储（.devContextMemo/resources/）
+       ↓ reason → 提炼流水线（复用Step 2a）
+  知识条目 + resource_ref 链接
+
+检索时：
+  MCP Tool get_knowledge → DB search → 返回知识 + 关联资源摘要
+  MCP Tool get_resource → 直接读取资源原文
+```
+
+**Steps 3-6 兼容性：** Steps 0-6 流水线使用 `dict(record)` 或 `**summary` 全透传模式，上游新增字段不会因未知字段报错。具体分析：
+
+| Step | 数据传递 | 新字段影响 | 需要改动 |
+|------|---------|:--:|------|
+| Step 2b EntityExtractor | `{**summary, ...}` 全透传 | 无 | 零 |
+| Step 3 Validator | `dict(record)` 全透传 | 无 | 零（校验逻辑放在 Step 2a 内部） |
+| Step 4 Deduplicator | `dict(record)` 全透传 | 暂不改 | 零（P1 TODO：按 knowledge_type 分组去重，当前 `existing_records=[]` 不会误判） |
+| **Step 5 Writer** | 显式白名单构建 `md_record` | 新字段被丢弃 | 需加 `knowledge_type` 列 + `decision_detail` JSON 列到白名单、frontmatter、DB |
+| Step 6 Consolidator | 只用 promotion/pruning 字段 | 无 | 零 |
+
+### 4.8 新增 MCP Tool
+
+| Tool | 功能 | Phase |
+|------|------|:--:|
+| `add_resource` | 添加文档资源（需求/Spec/设计文档） | 1 |
+| `get_resource` | 读取资源原文或摘要 | 1 |
+| `update_resource` | 更新资源（增量处理） | 1 |
+| `search_knowledge` | 扩展：返回知识+关联资源 | 1（增强） |
+
+**实现方式：** 扩展现有 `mcp/tools.py`（当前仅 3 个 tool），不新建 mcp module。资源相关的 3 个 tool 追加到现有工具文件中。
+
+---
+
+## 五、成本评估
+
+| 增量 | 工作量 | 说明 |
+|------|:--:|------|
+| 资源轨存储 + DB表 | ~1周 | 文件复制+FTS5索引+2张新表 |
+| add_resource CLI/MCP | ~1周 | 参考OpenViking add_resource简化版 |
+| Step2a 决策提取增强 | ~2天 | prompt扩展+KnowledgeType字段 |
+| reason→提炼流水线 | ~3天 | 复用现有session commit，增加resource_ref |
+| resource_ref 检索联动 | ~3天 | get_knowledge返回关联资源 |
+
+**总增量：~3周，Phase 1 可在原计划基础上增加约20%工期完成。**
+
+---
+
+## 六、双轨制详细设计
+
+> 本章是 §4.1 双轨制核心原则的落地展开，覆盖 CLI 接口、DB schema、检索协议、变更追踪、验收标准。
+
+### 6.1 资源管理 CLI
+
+参考 OpenViking `add_resource` 设计，但**比 OpenViking 更轻量**（无自动 Watch、无飞书集成、无 daemon 进程）。
+
+### 5.1.1 命令清单
+
+| 命令 | 用途 | 对应数据源 |
+|------|------|---------|
+| `devContextMemo resource add <path>` | 添加资源（自动识别类型） | ③需求 / ④Spec / 设计文档 |
+| `devContextMemo resource add <path> --type <requirements\|specs\|design\|api\|schema>` | 显式指定类型 | 同上 |
+| `devContextMemo resource add <path> --reason "<context>"` | 触发提炼（自动生成关联知识） | 全部 |
+| `devContextMemo resource list [--type X]` | 列出所有资源 | 全部 |
+| `devContextMemo resource show <resource_id>` | 查看资源元数据 | 全部 |
+| `devContextMemo resource search "<query>"` | FTS5 全文搜索 | 全部 |
+| `devContextMemo resource update <resource_id>` | 增量更新（重新提炼） | 全部 |
+| `devContextMemo resource remove <resource_id>` | 删除资源（软删除，保留审计日志） | 全部 |
+| `devContextMemo resource links <resource_id>` | 查看资源→知识链接 | 全部 |
+
+#### 6.1.2 `devContextMemo resource add` 详细行为
+
+```
+$ devContextMemo resource add ./docs/prd-v1.0.md \
+    --type requirements \
+    --reason "支付模块需求文档，v1.0 锁定 3 渠道"
+
+执行流程（同步完成）：
+  Step 1: 校验文件存在 + 可读
+  Step 2: content_hash = sha256(file)
+  Step 3: 类型推断（按 --type 或文件名规则）
+          - 文件名包含 prd/requirement → requirements
+          - 文件名包含 spec/api → specs
+          - 文件名包含 design/arch → design
+          - 后缀 .sql/.prisma → schema
+  Step 4: 复制到 .devContextMemo/resources/requirements/prd-v1.0.md
+  Step 5: 解析文档结构（标题、章节、表格、代码块）
+  Step 6: 语义分块（5类原子块，见 §6.3）
+  Step 7: 写入 resources 表 + resource_blocks 表
+  Step 8: FTS5 索引更新
+  Step 9: 如有 --reason，提交到提炼流水线
+  Step 10: 输出 resource_id + 关联 knowledge_id（如有）
+
+返回：
+{
+  "resource_id": "res_a1b2c3",
+  "type": "requirements",
+  "content_hash": "9f3a...",
+  "blocks": 23,
+  "knowledge_linked": ["kw_pay_channels_v1"]
+}
+```
+
+#### 6.1.3 MCP Tool 暴露
+
+将 `devContextMemo resource` 三个核心命令暴露为 MCP Tool，让 AI 助手**在 IDE 内就能调用**：
+
+| MCP Tool | 入参 | 用途 |
+|----------|------|------|
+| `resource_add` | path, type?, reason? | 添加资源 |
+| `resource_search` | query, type?, top_k? | 全文搜索 |
+| `resource_get_context` | resource_id, section? | 读取原文段落 |
+
+这样 AI 在写代码前可以**主动查询 spec**，而不是被动等用户说"看一下需求文档"。
+
+---
+
+### 6.2 资源轨 DB Schema
+
+> **开发阶段说明：** 当前为 0.1.0 研发阶段，DB schema 变更通过修改 SQLModel 定义 + DDL 重建即可，不依赖 migration 机制（如 Alembic）。未来进入稳定期再引入。
+
+#### 6.2.1 新增表（共 4 张）
+
+```sql
+-- 1. 资源元数据
+CREATE TABLE resources (
+    resource_id     TEXT PRIMARY KEY,           -- res_<hash8>
+    uri             TEXT NOT NULL UNIQUE,       -- resources/requirements/prd-v1.0.md
+    type            TEXT NOT NULL,              -- requirements | specs | design | api | schema
+    source_path     TEXT NOT NULL,              -- 原始路径（用户视角）
+    content_hash    TEXT NOT NULL,              -- sha256，用于增量检测
+    version         INTEGER DEFAULT 1,
+    title           TEXT,                       -- 文档标题（H1）
+    block_count     INTEGER DEFAULT 0,
+    added_at        INTEGER NOT NULL,
+    updated_at      INTEGER NOT NULL,
+    deleted_at      INTEGER,                    -- 软删除
+    metadata        TEXT DEFAULT '{}'           -- JSON：作者、标签、关联项目等
+);
+CREATE INDEX idx_resources_type ON resources(type);
+CREATE INDEX idx_resources_hash ON resources(content_hash);
+
+-- 2. 资源原子块（语义分块结果）
+CREATE TABLE resource_blocks (
+    block_id        TEXT PRIMARY KEY,           -- blk_<hash8>
+    resource_id     TEXT NOT NULL,
+    block_type      TEXT NOT NULL,              -- heading | paragraph | table | code | list
+    block_index     INTEGER NOT NULL,           -- 在文档中的顺序
+    content         TEXT NOT NULL,              -- 块原文
+    content_hash    TEXT NOT NULL,              -- 块级 hash，用于变化检测
+    parent_block_id TEXT,                       -- 嵌套结构（如表格行所属表格）
+    metadata        TEXT DEFAULT '{}',          -- JSON：行号、代码语言、章节路径
+    FOREIGN KEY (resource_id) REFERENCES resources(resource_id) ON DELETE CASCADE
+);
+CREATE INDEX idx_blocks_resource ON resource_blocks(resource_id);
+CREATE INDEX idx_blocks_type ON resource_blocks(block_type);
+
+-- 3. FTS5 全文索引（覆盖资源块）
+CREATE VIRTUAL TABLE resource_blocks_fts USING fts5(
+    block_id UNINDEXED,
+    resource_id UNINDEXED,
+    block_type UNINDEXED,
+    content,
+    tokenize = 'porter unicode61'
+);
+
+-- 4. 资源↔知识链接（双轨桥梁）
+CREATE TABLE resource_knowledge_links (
+    link_id         TEXT PRIMARY KEY,           -- lnk_<hash8>
+    resource_id     TEXT NOT NULL,
+    block_id        TEXT,                       -- 关联到具体块（可选）
+    knowledge_id    TEXT NOT NULL,
+    link_type       TEXT NOT NULL,              -- derived_from | references | contradicts | updates
+    confidence      REAL DEFAULT 1.0,           -- 链接置信度 0-1
+    created_at      INTEGER NOT NULL,
+    created_by      TEXT,                       -- 提取方式：llm_extraction / manual / git_hook
+    FOREIGN KEY (resource_id) REFERENCES resources(resource_id) ON DELETE CASCADE,
+    FOREIGN KEY (knowledge_id) REFERENCES knowledge(knowledge_id) ON DELETE CASCADE
+);
+CREATE INDEX idx_links_resource ON resource_knowledge_links(resource_id);
+CREATE INDEX idx_links_knowledge ON resource_knowledge_links(knowledge_id);
+CREATE INDEX idx_links_type ON resource_knowledge_links(link_type);
+```
+
+#### 6.2.2 与已有表的关系
+
+```
+knowledge（已有）
+  ↑
+  │ resource_knowledge_links（新）
+  │
+resource（新）
+  │
+  └─ resource_blocks（新）
+        │
+        └─ resource_blocks_fts（新）
+```
+
+**零侵入**——所有新表独立于已有表，已有的 `knowledge`/`session`/`code_graph` 表结构完全不动。
+
+#### 6.2.3 链接类型语义
+
+| link_type | 含义 | 典型场景 |
+|-----------|------|---------|
+| `derived_from` | 知识从资源提炼而来 | spec 提炼成"支付 3 渠道"知识 |
+| `references` | 知识引用了资源内容 | 决策理由里提到"按 prd §3.2" |
+| `contradicts` | 知识与资源冲突 | spec 说用 MySQL，代码用 PG |
+| `updates` | 知识是对旧资源版本的更新 | 知识来自 spec v1.1，覆盖 v1.0 旧知识 |
+
+`contradicts` 类型是**校准引擎**的输入——发现这种链接意味着需要人工介入确认。
+
+---
+
+### 6.3 资源语义分块策略
+
+**核心原则：按结构切，不按 token 切。**
+
+**实现库：** `markdown-it-py`，标准 CommonMark 解析器，支持 AST 遍历提取 heading/paragraph/table/code/list 5 类块。
+
+接口定义（method + path + 请求/响应 schema）是一个原子单位，不能被 token 切断。字段表按行切，每个字段独立成块。
+
+#### 6.3.1 5 类原子块
+
+| block_type | 来源 | 保留规则 | 示例 |
+|------------|------|---------|------|
+| `heading` | `#`/`##`/`###` | 保留，存为章节锚点 | `## 3.2 支付渠道定义` |
+| `paragraph` | 连续文本段落 | 保留，过滤样板 | "支付模块支持 3 种渠道：微信、支付宝、银联" |
+| `table` | Markdown 表格 | 按行切，每行独立块 | 字段定义表的每一行 |
+| `code` | 代码块 | 整体保留一个块（接口/类型定义不切开） | `POST /api/pay` 接口定义 |
+| `list` | 有序/无序列表 | 整体保留一个块 | 错误码列表 |
+
+#### 6.3.2 过滤规则（不进入分块）
+
+- 目录（TOC）
+- 修订记录 / 版本历史
+- 页眉页脚
+- 样板措辞（"本文档描述了..."、"如右图所示"）
+- 纯装饰性 emoji / 表格分隔符
+
+#### 6.3.3 元数据
+
+每个块附加：
+
+```json
+{
+  "section_path": ["支付模块", "3 接口定义", "3.2 支付渠道"],
+  "line_start": 142,
+  "line_end": 156,
+  "code_lang": "javascript",
+  "is_interface": true
+}
+```
+
+`section_path` 让检索结果可以"带章节定位"返回，AI 一眼知道这条知识来自哪一节。
+
+---
+
+### 6.4 双轨检索协议
+
+#### 6.4.1 统一查询接口
+
+**架构决策：Facade + 双 Service。** 新建 `ContextQueryEngine` 作为统一 facade 层，负责合并两轨结果和三级回退排序；`KnowledgeService`（已有 275 行）和 `ResourceService`（新建）各自独立维护查询逻辑。
+
+```
+MCP Tool / CLI / API
+         │
+  ContextQueryEngine   ← 新建 facade（合并去重 + 三级回退排序）
+    │         │
+KnowledgeService  ResourceService   ← 各自独立
+```
+
+```python
+class ContextQueryEngine:
+    def query(
+        self,
+        question: str,
+        top_k_knowledge: int = 5,      # 记忆轨返回条数
+        top_k_resource: int = 3,       # 资源轨返回条数
+        layers: list[int] = [1, 2, 3], # 限定检索层级
+        min_confidence: float = 0.5
+    ) -> ContextBundle:
+        """
+        双轨并行检索，返回合并后的上下文包。
+        完整回退顺序：L1 记忆 → L2 资源段落 → L3 完整资源
+        """
+        ...
+```
+
+#### 6.4.2 检索执行流程
+
+```
+query("支付模块用什么数据库？")
+    │
+    ├─ 记忆轨检索（FTS5 + 向量，命中 knowledge 表）
+    │   → 命中 "ky_db_choice"（决策知识：选 MySQL 因为团队熟悉）
+    │   → 关联 resource_ref → resource_blocks_fts 二次检索
+    │
+    ├─ 资源轨检索（FTS5，命中 resource_blocks 表）
+    │   → 命中 block "支付模块使用 MySQL 8.0，3 节点主从"
+    │
+    └─ 合并：相关度排序 + 去重（同一信息不重复返回）
+        → 优先返回记忆条目（token 密度高）
+        → 附带资源段落（resource_ref 形式）
+        → 如两者都不够才返回完整资源文件
+```
+
+#### 6.4.3 注入时三级回退
+
+| 优先级 | 内容 | Token 消耗 | 触发条件 |
+|:--:|-------|:--:|------|
+| L1 | 知识条目（带 source 标注） | ~250 | 记忆轨命中 |
+| L2 | 资源段落（`resource_ref` 指向的块） | ~500-1000 | 记忆不命中 / 需要原文 |
+| L3 | 完整资源文件 | ~2000+ | L1+L2 不够 |
+
+L1 永远先试，命中就停。L2 仅在 L1 置信度低于阈值时触发。L3 是兜底，正常不会触发。
+
+---
+
+### 6.5 资源变更追踪
+
+#### 6.5.1 检测机制
+
+| 触发方式 | 时机 | 适用场景 |
+|---------|------|---------|
+| `devContextMemo resource update <id>` | 手动 | 用户改了 spec，主动同步 |
+| `devContextMemo reconcile` | 按需 | 一次性全量校准 |
+
+Phase 1 **不做文件 Watch daemon 和 post-commit hook**（避免调度复杂度）。资源变更检测通过现有 `utils/diff.py` 的 git diff 能力实现，手动触发 update 或 reconcile 时读取 diff 判断变更文件。
+
+#### 6.5.2 增量更新流程
+
+```
+devContextMemo resource update res_a1b2c3
+    │
+    Step 1: 重读源文件 → 计算 content_hash
+    Step 2: 与 DB 中 hash 对比
+            ├── 一致 → 跳过，提示"无变化"
+            └── 不一致 → 进入 Step 3
+    Step 3: 重新分块 → 计算每个块的 hash
+    Step 4: 对比新旧块
+            ├── 新增块 → 加入 resource_blocks + FTS5
+            ├── 修改块 → 更新 content + hash（保留 block_id）
+            └── 删除块 → 软删除（标记 deleted_at）
+    Step 5: 触发关联知识重提炼
+            - 通过 resource_knowledge_links 找到 knowledge_id 列表
+            - 对每条知识走 Step 2a 提炼，prompt 携带"此知识来自资源 v1.1"
+            - 旧知识标记 CANDIDATE_UPDATE（待人工确认覆盖）
+    Step 6: 写入 audit_log
+```
+
+#### 6.5.3 与校准引擎联动
+
+`dev dream` 触发校准时，自动检查 `resource_knowledge_links` 中标记为 `CANDIDATE_UPDATE` 的知识：
+- 询问用户"知识来自 spec v1.0，spec 已更新到 v1.1，是否覆盖？"
+- 用户确认 → 旧知识 STALE，新知识 ACTIVE
+- 用户拒绝 → 标记 CONFLICT，留给后续人工处理
+
+---
+
+### 6.6 双轨制的安全与权限
+
+#### 6.6.1 资源访问控制
+
+Phase 1 简化版：
+
+| 维度 | 规则 |
+|------|------|
+| 物理隔离 | 资源文件存在 `.devContextMemo/resources/`，与仓库同盘但独立目录 |
+| 软删除 | `deleted_at` 字段，物理文件保留 30 天后可清理 |
+| 审计 | 每次 add/update/remove 写 audit_log（who/when/what） |
+
+#### 6.6.2 敏感信息处理
+
+- 添加资源时检测：API key、密码、私钥模式
+- 检测命中 → 警告 + 要求 `--force-sensitive` 才执行
+- 提炼 prompt 显式要求"不要在知识条目中包含密钥、密码等敏感信息"
+
+---
+
+### 6.7 验收标准
+
+#### 6.7.1 功能验收
+
+| 编号 | 验收项 | 通过条件 |
+|------|-------|---------|
+| AC-01 | `devContextMemo resource add` 能添加 5 种类型文档 | 5/5 类型成功 |
+| AC-02 | 资源自动分块 | 1000 行 spec → ≥80% 块结构合理 |
+| AC-03 | FTS5 全文搜索准确 | 关键词"支付"在 5 篇相关资源中 100% 命中 |
+| AC-04 | 双轨检索合并 | 同一问题同时返回记忆 + 资源，不重复 |
+| AC-05 | 三级回退触发 | L1 不命中时自动回退到 L2 |
+| AC-06 | 增量更新不丢旧块 | update 后旧 block_id 仍可查询（标记 deleted_at） |
+| AC-07 | 知识追溯到资源 | 知识条目 100% 有 `resource_ref`（人工补充除外） |
+| AC-08 | 冲突检测 | spec v1.0 vs v1.1 同一字段被改，自动生成 `contradicts` 链接 |
+
+#### 6.7.2 性能验收
+
+| 编号 | 指标 | 阈值 |
+|------|------|------|
+| PC-01 | 10MB 资源添加耗时 | ≤ 5s |
+| PC-02 | FTS5 检索响应 | ≤ 100ms（1万块） |
+| PC-03 | 双轨合并排序 | ≤ 50ms |
+| PC-04 | 增量 update 1000 块资源 | ≤ 3s |
+
+#### 6.7.3 兼容验收
+
+| 编号 | 验收项 | 通过条件 |
+|------|-------|---------|
+| CO-01 | 已有的 `.devContextMemo/knowledge/` 不受影响 | 升级前后知识条目 100% 可访问 |
+| CO-02 | 已有的 JSONL 对话日志不重处理 | 不触发新提炼 |
+| CO-03 | 已有 DB schema 不破坏 | `knowledge`/`session` 表结构 0 变更 |
+
+---
+
+### 6.8 与现有决策的关系
+
+| 已决策 | 影响 |
+|--------|------|
+| D1 (MCP) | 资源命令暴露为 MCP Tool，AI 可直接调用 |
+| D2 (FastAPI) | `devContextMemo resource` 命令通过 FastAPI 暴露 HTTP 接口 |
+| D7 (FTS5) | 资源块走同一套 FTS5 引擎，零新依赖 |
+| D14 (MD-DB 双写) | 资源文件本身不入库，只索引；DB 存元数据 + 块级引用 |
+| D57 (Phase 2 决策提前) | 本章把 D57 落地为可执行设计 |
+| D70 (维持四元组) | 资源轨不新增 ContentLayer 维度，分类轴不动 |
+| D71 (三层采集) | 资源轨对应"意图层独立采集"的存储实现 |
+| D72 (KY 定义修正) | 知识提炼 prompt 同步更新 |
+
+---
+
+## 七、决策建议
+
+| # | 建议 | 紧迫性 |
+|---|------|:--:|
+| D57 | Phase 1 增加资源轨（③④文档独立采集+索引） | P0 |
+| D58 | Step2a 增加决策类型标注（②从对话中独立提取） | P0 |
+| D59 | 知识条目增加 resource_ref 字段（资源-记忆显式链接） | P0 |
+| D60 | Phase 1 增加 add_resource / get_resource MCP Tool | P1 |
+| D61 | 源代码AST类级别映射提前到 Phase 1.5（成本中等） | P1 |
+
+**理由**：60%的项目知识骨架缺失意味着 Phase 1 的核心闭环断裂——对话提炼的知识无法追溯到需求来源，纠错spec的理由无法独立存储，校准引擎无法对照需求验证知识有效性。
