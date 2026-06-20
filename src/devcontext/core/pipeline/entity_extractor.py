@@ -124,7 +124,10 @@ class EntityExtractor:
 
         for summary in summaries:
             entities, relations = self._extract_for_item(summary)
+            decision_detail = self._extract_decision_detail(summary)
             record = {**summary, "entities": entities, "relations": relations}
+            if decision_detail:
+                record["decision_detail"] = decision_detail
             knowledge_records.append(record)
 
         # 写 knowledge JSONL
@@ -306,6 +309,110 @@ class EntityExtractor:
             relations.append({"source": source, "target": target, "type": rel_type})
 
         return entities, relations
+
+    # ------------------------------------------------------------------
+    # 决策详情提取
+    # ------------------------------------------------------------------
+
+    def _extract_decision_detail(
+        self, summary: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """对 decision 类型条目提取 4 个决策详情字段。
+
+        仅 knowledge_type=decision 时触发，非 decision 返回 None（零增量）。
+
+        Args:
+            summary: summary 记录（含 knowledge_type 字段）。
+
+        Returns:
+            含 decision_context/options/rationale/consequence 的 dict，或 None。
+        """
+        knowledge_type = summary.get("knowledge_type", "")
+        if knowledge_type != "decision":
+            return None
+
+        knowledge_text = summary.get("knowledge_text", "")
+        prompt = self._build_decision_prompt(knowledge_text)
+        system_prompt = "你是 devContextMemo 的决策详情提取器，只输出 JSON。"
+
+        for attempt in range(_MAX_RETRIES):
+            try:
+                response = self.llm.chat(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt},
+                    ],
+                    model=self.model,
+                    temperature=0.2,
+                    response_format={"type": "json_object"},
+                )
+                content = response["choices"][0]["message"]["content"]
+                detail = json.loads(content)
+                self._validate_decision_detail(detail)
+                return detail
+
+            except (json.JSONDecodeError, ValueError, KeyError) as e:
+                logger.warning(
+                    "Decision extraction attempt %d/%d failed: %s",
+                    attempt + 1,
+                    _MAX_RETRIES,
+                    e,
+                )
+                if attempt < _MAX_RETRIES - 1:
+                    prompt += (
+                        f"\n\n[上次输出格式错误，请严格按 JSON schema 返回。错误：{e}]"
+                    )
+
+        logger.error("Decision extraction failed after %d attempts", _MAX_RETRIES)
+        return None
+
+    @staticmethod
+    def _build_decision_prompt(knowledge_text: str) -> str:
+        """构建决策详情提取 Prompt。
+
+        Args:
+            knowledge_text: 知识文本。
+
+        Returns:
+            Prompt 字符串。
+        """
+        return f"""从以下决策知识中提取 4 个结构化字段。
+
+输出 JSON 格式：
+{{
+  "decision_context": "为什么需要做这个决策（背景描述）",
+  "decision_options": ["选项A", "选项B", "选项C"],
+  "decision_rationale": "选择理由（为什么选这个而不是别的）",
+  "decision_consequence": "预期后果/影响"
+}}
+
+注意：
+- decision_options 必须包含至少 2 个选项
+- 如果无法推断某个字段，设为空字符串或空数组
+- decision_context/rationale/consequence 为字符串，options 为字符串数组
+
+【决策知识】
+{knowledge_text}
+"""
+
+    @staticmethod
+    def _validate_decision_detail(detail: dict[str, Any]) -> None:
+        """校验决策详情结构。
+
+        Args:
+            detail: LLM 输出的决策详情 dict。
+
+        Raises:
+            ValueError: 字段缺失或类型错误。
+        """
+        required = {"decision_context", "decision_options", "decision_rationale", "decision_consequence"}
+        missing = required - set(detail.keys())
+        if missing:
+            raise ValueError(f"Missing decision detail fields: {missing}")
+        if not isinstance(detail["decision_options"], list):
+            raise ValueError("decision_options must be a list")
+        if len(detail["decision_options"]) < 2:
+            raise ValueError("decision_options must have at least 2 options")
 
     # ------------------------------------------------------------------
     # IO 工具

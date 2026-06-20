@@ -220,3 +220,140 @@ class TestGracefulDegradation:
         extractor = EntityExtractor(MockLLMClient("{}"), tmp_path)
         out = extractor.process(summary)
         assert out.exists()
+
+
+# =============================================================================
+# 决策详情提取
+# =============================================================================
+
+class TestDecisionDetailExtraction:
+    """决策详情提取（仅 decision 类型触发）。"""
+
+    def test_skips_decision_for_non_decision_type(self):
+        """非 decision 类型 → 返回 None。"""
+        from devcontext.core.pipeline.entity_extractor import EntityExtractor
+
+        extractor = EntityExtractor.__new__(EntityExtractor)
+        summary = {
+            "knowledge_text": "端口是8080",
+            "knowledge_type": "fact",
+        }
+        result = extractor._extract_decision_detail(summary)
+        assert result is None
+
+    def test_skips_decision_for_missing_knowledge_type(self):
+        """缺少 knowledge_type 字段 → 返回 None。"""
+        from devcontext.core.pipeline.entity_extractor import EntityExtractor
+
+        extractor = EntityExtractor.__new__(EntityExtractor)
+        summary = {"knowledge_text": "选了MySQL"}
+        result = extractor._extract_decision_detail(summary)
+        assert result is None
+
+    def test_decision_prompt_includes_options(self):
+        """Prompt 要求至少 2 个选项。"""
+        from devcontext.core.pipeline.entity_extractor import EntityExtractor
+
+        prompt = EntityExtractor._build_decision_prompt("选了MySQL而非PostgreSQL")
+        assert "decision_options" in prompt
+        assert "至少 2 个选项" in prompt
+
+    def test_validates_missing_fields(self):
+        """Missing field → ValueError。"""
+        from devcontext.core.pipeline.entity_extractor import EntityExtractor
+
+        with pytest.raises(ValueError, match="Missing"):
+            EntityExtractor._validate_decision_detail({"decision_context": "x"})
+
+    def test_validates_options_not_list(self):
+        """options 不是 list → ValueError。"""
+        from devcontext.core.pipeline.entity_extractor import EntityExtractor
+
+        with pytest.raises(ValueError, match="must be a list"):
+            EntityExtractor._validate_decision_detail({
+                "decision_context": "x",
+                "decision_options": "not a list",
+                "decision_rationale": "y",
+                "decision_consequence": "z",
+            })
+
+    def test_validates_less_than_2_options(self):
+        """少于 2 个选项 → ValueError。"""
+        from devcontext.core.pipeline.entity_extractor import EntityExtractor
+
+        with pytest.raises(ValueError, match="at least 2"):
+            EntityExtractor._validate_decision_detail({
+                "decision_context": "x",
+                "decision_options": ["only one"],
+                "decision_rationale": "y",
+                "decision_consequence": "z",
+            })
+
+    def test_decision_detail_appears_in_output_record(self, tmp_path):
+        """decision 类型的 knowledge JSONL 记录携带 decision_detail 字段。"""
+        from devcontext.core.pipeline.entity_extractor import EntityExtractor
+        from devcontext.utils.llm import MockLLMClient
+        from tests.conftest import write_jsonl, read_jsonl
+
+        decision_summary = {
+            "session_id": "s1",
+            "knowledge_text": "选用 MySQL 而非 PostgreSQL 因为团队熟悉",
+            "knowledge_type": "decision",
+            "granularity": "L2", "stability": "S3", "depth": "KH",
+            "domain": "storage", "confidence": 0.9,
+            "occurred_at": "2026-06-18T10:00:00Z",
+            "source_messages": [3], "status": "staged",
+        }
+
+        decision_detail_output = json.dumps({
+            "decision_context": "需要选择数据库",
+            "decision_options": ["MySQL", "PostgreSQL", "SQLite"],
+            "decision_rationale": "团队熟悉MySQL",
+            "decision_consequence": "使用MySQL作为主数据库",
+        })
+
+        # Mock: first call → entity extraction (for _extract_for_item), second call → decision detail
+        counter = {"n": 0}
+        entity_resp = json.dumps({"entities": [], "relations": []})
+        resps = [entity_resp, decision_detail_output]
+
+        def fn(msgs):
+            i = counter["n"]
+            counter["n"] += 1
+            return resps[i] if i < len(resps) else resps[-1]
+
+        summary = tmp_path / "summary_s1.jsonl"
+        write_jsonl(summary, [decision_summary])
+        extractor = EntityExtractor(MockLLMClient(response_func=fn), tmp_path)
+        results = read_jsonl(extractor.process(summary))
+
+        assert len(results) == 1
+        assert "decision_detail" in results[0]
+        assert results[0]["decision_detail"]["decision_context"] == "需要选择数据库"
+        assert results[0]["decision_detail"]["decision_options"] == ["MySQL", "PostgreSQL", "SQLite"]
+
+    def test_non_decision_record_has_no_decision_detail(self, tmp_path):
+        """非 decision 记录不携带 decision_detail 字段。"""
+        from devcontext.core.pipeline.entity_extractor import EntityExtractor
+        from devcontext.utils.llm import MockLLMClient
+        from tests.conftest import write_jsonl, read_jsonl
+
+        fact_summary = {
+            "session_id": "s1",
+            "knowledge_text": "端口是8080",
+            "knowledge_type": "fact",
+            "granularity": "L3", "stability": "S4", "depth": "KW",
+            "domain": "config", "confidence": 0.9,
+            "occurred_at": "2026-06-18T10:00:00Z",
+            "source_messages": [4], "status": "staged",
+        }
+
+        entity_resp = json.dumps({"entities": [], "relations": []})
+
+        summary = tmp_path / "summary_s1.jsonl"
+        write_jsonl(summary, [fact_summary])
+        extractor = EntityExtractor(MockLLMClient(entity_resp), tmp_path)
+        results = read_jsonl(extractor.process(summary))
+
+        assert len(results) == 1
+        assert "decision_detail" not in results[0]
