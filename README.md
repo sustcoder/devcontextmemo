@@ -177,6 +177,23 @@ DEVCONTEXT_LLM_MODEL=deepseek-chat
 | `BATCH_TOKEN_THRESHOLD` | 攒批 token 阈值 | `6000` |
 | `BATCH_MAX_AGE_MINUTES` | 批次最大存活时间 | `30` |
 
+### 目录结构
+
+| 目录 | 说明 | 默认值 |
+|------|------|--------|
+| `KNOWLEDGE_DIR` | 记忆轨知识目录 | `.devContextMemo/knowledge/` |
+| `STAGING_DIR` | 待审核/staging | `.devContextMemo/staging/` |
+| `DEPRECATED_DIR` | 已废弃知识 | `.devContextMemo/deprecated/` |
+| `RAW_DIR` | 原始会话数据 | `~/.devcontext/raw` |
+
+### 资源轨（新增）
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `RESOURCES_DIR` | 资源文档目录 | `.devContextMemo/resources/` |
+| `DOMAIN_TREE_PATH` | 领域树配置文件 | `.devContextMemo/domain-tree.yaml` |
+| 资源文件大小上限 | 单文件 ≤ 100MB | — |
+
 ---
 
 ## 测试
