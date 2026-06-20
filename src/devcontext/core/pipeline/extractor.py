@@ -28,7 +28,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from devcontext.models.enums import is_valid_depth, is_valid_domain, is_valid_lx, is_valid_sy
+from devcontext.models.enums import is_valid_depth, is_valid_domain, is_valid_knowledge_type, is_valid_lx, is_valid_sy
 from devcontext.utils.llm import LLMClient
 
 logger = logging.getLogger(__name__)
@@ -40,6 +40,7 @@ _REQUIRED_ITEM_FIELDS = (
     "stability",
     "depth",
     "domain",
+    "knowledge_type",
     "confidence",
 )
 
@@ -396,6 +397,12 @@ class Extractor:
                 f"Item {index} invalid domain: {item['domain']!r} " f"(not in domain_tree)"
             )
 
+        # knowledge_type 校验
+        if not is_valid_knowledge_type(item["knowledge_type"]):
+            raise ValueError(
+                f"Item {index} invalid knowledge_type: {item['knowledge_type']!r}"
+            )
+
         # confidence 范围
         confidence = item["confidence"]
         if not isinstance(confidence, (int, float)):
@@ -445,6 +452,7 @@ class Extractor:
             "stability": item["stability"],
             "depth": item["depth"],
             "domain": item["domain"],
+            "knowledge_type": item["knowledge_type"],
             "confidence": float(item["confidence"]),
             "occurred_at": item.get("occurred_at"),
             "source_messages": source_messages,

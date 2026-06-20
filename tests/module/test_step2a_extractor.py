@@ -52,7 +52,8 @@ class TestExtractorBasic:
     def test_produces_valid_summary_format(self, tmp_path):
         llm_resp = _make_llm_response([
             {"content": "幂等校验 key=orderId", "granularity": "L3", "stability": "S4",
-             "depth": "KH", "domain": "order", "confidence": 0.87,
+             "depth": "KH", "domain": "order", "knowledge_type": "decision",
+             "confidence": 0.87,
              "occurred_at": "2026-06-18T09:58:00Z", "source_messages": [1]},
         ])
         batch = tmp_path / "batch.jsonl"
@@ -70,6 +71,7 @@ class TestExtractorBasic:
             assert "stability" in item
             assert "depth" in item
             assert "domain" in item
+            assert "knowledge_type" in item
             assert "confidence" in item
             assert "occurred_at" in item
             assert "source_messages" in item
@@ -78,7 +80,8 @@ class TestExtractorBasic:
     def test_classification_enums_valid(self, tmp_path):
         llm_resp = _make_llm_response([
             {"content": "test", "granularity": "L5", "stability": "S5",
-             "depth": "KY", "domain": "order", "confidence": 0.9,
+             "depth": "KY", "domain": "order", "knowledge_type": "fact",
+             "confidence": 0.9,
              "occurred_at": None, "source_messages": [1]},
         ])
         batch = tmp_path / "batch.jsonl"
@@ -93,7 +96,8 @@ class TestExtractorBasic:
     def test_confidence_in_range(self, tmp_path):
         llm_resp = _make_llm_response([
             {"content": "x", "granularity": "L2", "stability": "S3",
-             "depth": "KH", "domain": "order", "confidence": 0.5,
+             "depth": "KH", "domain": "order", "knowledge_type": "fact",
+             "confidence": 0.5,
              "occurred_at": None, "source_messages": [1]},
         ])
         batch = tmp_path / "batch.jsonl"
@@ -105,7 +109,8 @@ class TestExtractorBasic:
     def test_output_count_not_exceed_input(self, tmp_path):
         llm_resp = _make_llm_response([
             {"content": f"item {i}", "granularity": "L2", "stability": "S3",
-             "depth": "KH", "domain": "order", "confidence": 0.7,
+             "depth": "KH", "domain": "order", "knowledge_type": "fact",
+             "confidence": 0.7,
              "occurred_at": None, "source_messages": [1]}
             for i in range(3)
         ])
@@ -119,7 +124,8 @@ class TestExtractorBasic:
     def test_status_is_staged(self, tmp_path):
         llm_resp = _make_llm_response([
             {"content": "x", "granularity": "L2", "stability": "S3",
-             "depth": "KH", "domain": "order", "confidence": 0.7,
+             "depth": "KH", "domain": "order", "knowledge_type": "fact",
+             "confidence": 0.7,
              "occurred_at": None, "source_messages": [1]},
         ])
         batch = tmp_path / "batch.jsonl"
@@ -144,14 +150,13 @@ class TestExtractorEdgeCases:
             extractor.process(batch)
 
     def test_empty_extracted_items_allowed(self, tmp_path):
-        """LLM 返回空数组表示无知识可提炼（正常情况）。"""
+        """LLM 返回空数组时 process 抛出 ValueError。"""
         llm_resp = _make_llm_response([])
         batch = tmp_path / "batch.jsonl"
         write_jsonl(batch, BATCH_DATA)
         extractor = Extractor(MockLLMClient(llm_resp), DOMAIN_TREE, tmp_path)
-        out = extractor.process(batch)
-        results = read_jsonl(out)
-        assert len(results) == 0
+        with pytest.raises(ValueError, match="No knowledge extracted"):
+            extractor.process(batch)
 
     def test_malformed_json_raises(self, tmp_path):
         batch = tmp_path / "batch.jsonl"
@@ -163,7 +168,8 @@ class TestExtractorEdgeCases:
     def test_invalid_granularity_raises(self, tmp_path):
         llm_resp = _make_llm_response([
             {"content": "x", "granularity": "L9", "stability": "S3",
-             "depth": "KH", "domain": "order", "confidence": 0.5,
+             "depth": "KH", "domain": "order", "knowledge_type": "fact",
+             "confidence": 0.5,
              "occurred_at": None, "source_messages": [1]},
         ])
         batch = tmp_path / "batch.jsonl"
@@ -175,7 +181,8 @@ class TestExtractorEdgeCases:
     def test_invalid_domain_raises(self, tmp_path):
         llm_resp = _make_llm_response([
             {"content": "x", "granularity": "L2", "stability": "S3",
-             "depth": "KH", "domain": "nonexistent", "confidence": 0.5,
+             "depth": "KH", "domain": "nonexistent", "knowledge_type": "fact",
+             "confidence": 0.5,
              "occurred_at": None, "source_messages": [1]},
         ])
         batch = tmp_path / "batch.jsonl"
@@ -195,7 +202,8 @@ class TestExtractorTimeExtraction:
     def test_explicit_timestamp_extracted(self, tmp_path):
         llm_resp = _make_llm_response([
             {"content": "修复支付超时", "granularity": "L3", "stability": "S4",
-             "depth": "KW", "domain": "order", "confidence": 0.9,
+             "depth": "KW", "domain": "order", "knowledge_type": "fact",
+             "confidence": 0.9,
              "occurred_at": "2026-06-18T10:03:00Z", "source_messages": [1]},
         ])
         batch = tmp_path / "batch.jsonl"
@@ -209,7 +217,8 @@ class TestExtractorTimeExtraction:
         """无法推断时间时 occurred_at 为 null。"""
         llm_resp = _make_llm_response([
             {"content": "团队很久以前用过 MongoDB", "granularity": "L0", "stability": "S5",
-             "depth": "KY", "domain": "architecture", "confidence": 0.7,
+             "depth": "KY", "domain": "architecture", "knowledge_type": "experience",
+             "confidence": 0.7,
              "occurred_at": None, "source_messages": [1]},
         ])
         batch = tmp_path / "batch.jsonl"
@@ -222,6 +231,43 @@ class TestExtractorTimeExtraction:
 # =============================================================================
 # 截断与置信度上限
 # =============================================================================
+
+# =============================================================================
+# knowledge_type 直通
+# =============================================================================
+
+class TestExtractorKnowledgeType:
+    """knowledge_type 字段的校验与直通。"""
+
+    def test_pass_through_knowledge_type(self, tmp_path):
+        """验证 _build_record 包含 LLM 输出的 knowledge_type。"""
+        llm_resp = _make_llm_response([
+            {"content": "使用 MySQL 8.0 作为主数据库", "granularity": "L2",
+             "stability": "S3", "depth": "KH", "domain": "order",
+             "knowledge_type": "decision", "confidence": 0.88,
+             "occurred_at": None, "source_messages": [1, 2]},
+        ])
+        batch = tmp_path / "batch.jsonl"
+        write_jsonl(batch, BATCH_DATA)
+        extractor = Extractor(MockLLMClient(llm_resp), DOMAIN_TREE, tmp_path)
+        results = read_jsonl(extractor.process(batch))
+        assert results[0]["knowledge_type"] == "decision"
+        assert results[0]["knowledge_text"] == "使用 MySQL 8.0 作为主数据库"
+
+    def test_rejects_invalid_knowledge_type(self, tmp_path):
+        """验证 _validate_item 拒绝非法的 knowledge_type 值。"""
+        llm_resp = _make_llm_response([
+            {"content": "test", "granularity": "L2", "stability": "S3",
+             "depth": "KH", "domain": "order",
+             "knowledge_type": "bug_report", "confidence": 0.5,
+             "occurred_at": None, "source_messages": [1]},
+        ])
+        batch = tmp_path / "batch.jsonl"
+        write_jsonl(batch, BATCH_DATA)
+        extractor = Extractor(MockLLMClient(llm_resp), DOMAIN_TREE, tmp_path)
+        with pytest.raises(ValueError, match="invalid knowledge_type"):
+            extractor.process(batch)
+
 
 class TestExtractorTruncation:
     """对话截断时的置信度上限。"""
@@ -236,7 +282,8 @@ class TestExtractorTruncation:
         ]
         llm_resp = _make_llm_response([
             {"content": "extracted", "granularity": "L2", "stability": "S3",
-             "depth": "KH", "domain": "order", "confidence": 0.95,
+             "depth": "KH", "domain": "order", "knowledge_type": "fact",
+             "confidence": 0.95,
              "occurred_at": None, "source_messages": [1]},
         ])
         batch = tmp_path / "big_batch.jsonl"
