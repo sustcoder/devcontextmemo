@@ -510,3 +510,146 @@ def _search_result_to_item(
             item["source_missing"] = True
 
     return item
+
+
+# =============================================================================
+# Phase 1 双轨制：资源 Tool（resource_add / resource_search / resource_get_context）
+# =============================================================================
+
+
+def resource_add(
+    resource_service,  # ResourceService（避免循环导入，Any 类型标注亦可）
+    *,
+    path: str,
+    type: str | None = None,
+    reason: str | None = None,
+) -> ToolResponse:
+    """添加文档资源（需求/Spec/设计文档）。
+
+    Args:
+        resource_service: ResourceService 实例。
+        path: 源文件绝对路径。
+        type: 资源类型 requirements|specs|design|api|schema（可选，自动推断）。
+        reason: 添加原因（触发知识提炼）。
+
+    Returns:
+        ToolResponse，data 含 resource_id/type/content_hash/blocks/title/uri。
+    """
+    if not path or not path.strip():
+        raise ValidationError(400, "path is required")
+    if type is not None and type not in ("requirements", "specs", "design", "api", "schema"):
+        raise ValidationError(400, f"invalid type: {type}")
+
+    from pathlib import Path as _Path
+
+    src = _Path(path).expanduser()
+    if not src.exists():
+        return ToolResponse(
+            {
+                "error": f"File not found: {path}",
+                "resource_id": None,
+            },
+            status=404,
+        )
+
+    try:
+        result = resource_service.add(str(src), resource_type=type, reason=reason)
+        return ToolResponse(
+            {
+                "resource_id": result["resource_id"],
+                "type": result["type"],
+                "content_hash": result["content_hash"],
+                "blocks": result["blocks"],
+                "title": result.get("title"),
+                "uri": result.get("uri"),
+                "status": result.get("status", "created"),
+            }
+        )
+    except ValueError as e:
+        return ToolResponse({"error": str(e), "resource_id": None}, status=400)
+
+
+def resource_search(
+    resource_service,  # ResourceService
+    *,
+    query: str,
+    type: str | None = None,
+    top_k: int = 5,
+) -> ToolResponse:
+    """搜索资源块。
+
+    Args:
+        resource_service: ResourceService 实例。
+        query: 搜索关键词。
+        type: 资源类型过滤（可选）。
+        top_k: 返回条数（默认 5，最大 20）。
+
+    Returns:
+        ToolResponse，data 含 items/total。
+    """
+    if not query or not query.strip():
+        raise ValidationError(400, "query is required")
+    if top_k < 1 or top_k > 20:
+        raise ValidationError(400, "top_k must be between 1 and 20")
+    if type is not None and type not in ("requirements", "specs", "design", "api", "schema"):
+        raise ValidationError(400, f"invalid type: {type}")
+
+    results = resource_service.search(query, resource_type=type, top_k=top_k)
+
+    return ToolResponse(
+        {
+            "items": results,
+            "total": len(results),
+        }
+    )
+
+
+def resource_get_context(
+    resource_service,  # ResourceService
+    *,
+    resource_id: str,
+    section: str | None = None,
+) -> ToolResponse:
+    """读取资源原文段落。
+
+    Args:
+        resource_service: ResourceService 实例。
+        resource_id: 资源 ID。
+        section: 章节标题过滤（可选，如 "3.1 API 接口"）。
+
+    Returns:
+        ToolResponse，data 含 resource/blocks/total_blocks。
+    """
+    if not resource_id or not resource_id.strip():
+        raise ValidationError(400, "resource_id is required")
+
+    resource = resource_service.get(resource_id)
+    if not resource:
+        return ToolResponse(
+            {"error": f"Resource not found: {resource_id}"}, status=404
+        )
+
+    blocks = resource.get("blocks", [])
+    if section:
+        blocks = [
+            b
+            for b in blocks
+            if section.lower() in (b.get("extra_meta", "{}") or "{}").lower()
+            or section.lower() in b.get("content", "").lower()
+        ]
+
+    return ToolResponse(
+        {
+            "resource": {
+                "resource_id": resource["resource_id"],
+                "type": resource["type"],
+                "title": resource.get("title"),
+                "uri": resource.get("uri"),
+                "source_path": resource.get("source_path"),
+                "added_at": resource.get("added_at"),
+            },
+            "blocks": blocks[:20],
+            "total_blocks": len(blocks),
+            "truncated": len(blocks) > 20,
+        }
+    )
