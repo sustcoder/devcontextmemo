@@ -74,7 +74,9 @@ _VALID_RELATION_TYPES = frozenset(
 )
 
 # 最大重试次数
-_MAX_RETRIES = 3
+from devcontext.config import settings
+
+_MAX_RETRIES = settings.llm_max_retries
 
 
 class EntityExtractor:

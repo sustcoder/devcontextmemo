@@ -45,7 +45,9 @@ _REQUIRED_ITEM_FIELDS = (
 )
 
 # 最大重试次数
-_MAX_RETRIES = 3
+from devcontext.config import settings
+
+_MAX_RETRIES = settings.llm_max_retries
 
 # 置信度范围
 _CONFIDENCE_MIN = 0.0

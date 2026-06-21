@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_base_url: str = "https://api.minimax.chat/v1"
     llm_model: str = "MiniMax-Text-01"
+    llm_max_retries: int = 1
 
     # 服务
     host: str = "127.0.0.1"
