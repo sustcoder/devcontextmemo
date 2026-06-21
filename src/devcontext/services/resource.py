@@ -146,7 +146,7 @@ class ResourceService:
         )
 
         for idx, block in enumerate(blocks):
-            block_id = f"blk_{hashlib.sha256(block['content'].encode()).hexdigest()[:16]}"
+            block_id = f"blk_{hashlib.sha256(block['content'].encode()).hexdigest()[:12]}_{idx:04d}"
             block_hash = hashlib.sha256(block["content"].encode()).hexdigest()[:16]
             conn.execute(
                 """INSERT INTO resource_blocks (block_id, resource_id, block_type,
@@ -344,6 +344,7 @@ class ResourceService:
         from markdown_it import MarkdownIt
 
         md = MarkdownIt("commonmark", {"breaks": True, "html": False})
+        md.enable("table")
         content = file_path.read_text(encoding="utf-8")
         tokens = md.parse(content)
 
@@ -365,13 +366,15 @@ class ResourceService:
                 text_buffer.clear()
 
         i = 0
+        in_table = False
+        table_rows: list[str] = []
+
         while i < len(tokens):
             token = tokens[i]
 
             if token.type == "heading_open":
                 _flush_text()
                 level = int(token.tag[1])
-                # Trim current_section to this heading level
                 while len(current_section) >= level:
                     current_section.pop()
                 i += 1
@@ -388,6 +391,47 @@ class ResourceService:
                             }
                         )
                 i += 1  # skip heading_close
+                continue
+
+            if token.type == "table_open":
+                _flush_text()
+                in_table = True
+                table_rows = []
+                i += 1
+                continue
+
+            if token.type == "table_close":
+                in_table = False
+                if table_rows:
+                    for row_text in table_rows:
+                        if row_text.strip():
+                            blocks.append(
+                                {
+                                    "type": "table",
+                                    "content": row_text.strip(),
+                                    "metadata": {"section_path": list(current_section)},
+                                }
+                            )
+                table_rows = []
+                i += 1
+                continue
+
+            if token.type == "tr_open" and in_table:
+                table_rows.append("")
+                i += 1
+                continue
+
+            if token.type in ("th_open", "td_open") and in_table and table_rows:
+                i += 1
+                cell_parts: list[str] = []
+                while i < len(tokens) and tokens[i].type not in ("th_close", "td_close"):
+                    if tokens[i].type == "inline":
+                        cell_parts.append(tokens[i].content)
+                    i += 1
+                cell_text = "".join(cell_parts).strip()
+                if cell_text:
+                    sep = " | " if table_rows[-1] else ""
+                    table_rows[-1] += sep + cell_text
                 continue
 
             if token.type == "fence":

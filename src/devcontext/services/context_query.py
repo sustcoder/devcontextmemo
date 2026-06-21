@@ -97,11 +97,8 @@ class ContextQueryEngine:
             except Exception as e:
                 logger.warning("Memory track query failed: %s", e)
 
-        # === L2: 资源轨检索 ===
-        if 2 in layers and (
-            not bundle.memories
-            or bundle.memories[0].get("confidence", 0) < min_confidence
-        ):
+        # === L2: 资源轨检索（始终与 L1 并行查询） ===
+        if 2 in layers:
             try:
                 resource_results = self.resource.search(question, top_k=top_k_resource)
                 if resource_results:
@@ -117,7 +114,9 @@ class ContextQueryEngine:
                             "source_path": r.get("source_path"),
                             "track": "resource",
                         })
-                    bundle.fallback_level = 2
+                    # 记忆轨无命中时标记回退到 L2
+                    if not bundle.memories:
+                        bundle.fallback_level = 2
             except Exception as e:
                 logger.warning("Resource track query failed: %s", e)
 
