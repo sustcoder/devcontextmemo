@@ -116,10 +116,11 @@ class EntityExtractor:
             raise FileNotFoundError(f"Summary file not found: {summary_path}")
 
         summaries = self._read_jsonl(summary_path)
-        if not summaries:
-            raise ValueError(f"Summary file is empty: {summary_path}")
 
-        session_id = summaries[0].get("session_id", "unknown")
+        session_id = "unknown"
+        if summaries:
+            session_id = summaries[0].get("session_id", "unknown")
+
         knowledge_records: list[dict[str, Any]] = []
 
         for summary in summaries:
