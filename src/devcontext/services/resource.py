@@ -455,6 +455,10 @@ class ResourceService:
             elif token.type in ("softbreak", "hardbreak"):
                 text_buffer.append(" ")
 
+            # TODO(Phase 1.x): list block (bullet_list/ordered_list) —
+            # currently merged into paragraph; need list token dispatch
+            # to emit standalone `list` blocks. See spec §6.3.1.
+
             i += 1
 
         _flush_text()
